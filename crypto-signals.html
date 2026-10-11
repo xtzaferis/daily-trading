@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crypto Signals</title>
+<link rel="stylesheet" href="crypto-signals.css">
+</head>
+<body>
+<header>
+  <h1>Crypto Signals · Live Scanner</h1>
+  <div class="toolbar">
+    <label>Timeframe
+      <select id="tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option></select>
+    </label>
+    <label>Direction
+      <select id="dir"><option value="both" selected>Long + Short</option><option value="long">Long only</option><option value="short">Short only</option></select>
+    </label>
+    <label title="How many of the most liquid USDT pairs to scan each refresh">Universe size<input id="poolSize" type="number" value="40" min="5" max="150" step="5"></label>
+    <label title="Minimum 24h quote volume (USDT) for a pair to be eligible">Min 24h vol (USDT)<input id="minVol" type="number" value="5000000" step="1000000"></label>
+    <label title="Show this many top-ranked opportunities">Top N<input id="topN" type="number" value="10" min="1" max="50"></label>
+    <label title="Comma-separated symbols always included, e.g. PEPE,WIF">Watch extra<input id="pinned" type="text" placeholder="e.g. PEPE,WIF"></label>
+    <label>Account (USDT)<input id="acct" type="number" value="10000"></label>
+    <label>Risk / trade %<input id="risk" type="number" value="1" step="0.25"></label>
+    <button id="refresh">Refresh</button>
+    <button id="alerts">Enable alerts</button>
+    <span class="spacer"></span>
+    <span id="countdown" class="mute"></span>
+    <span id="status">Loading…</span>
+  </div>
+  <div class="sub">Dynamically scans liquid Binance USDT pairs and ranks the strongest long and short setups · signals use closed candles only</div>
+</header>
+
+<div class="stats" id="stats"></div>
+
+<main>
+  <section class="card">
+    <h2>Top opportunities <span class="mute hint">· click a row for the full trade plan</span></h2>
+    <table>
+      <thead><tr>
+        <th>#</th><th>Asset</th><th>Price</th><th>24h</th><th>Trend</th><th>RSI</th><th>Score</th><th>Signal</th><th>Side</th>
+        <th title="Backtest of this exact rule set on the loaded candles">Backtest win% / trades</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+  <div class="right">
+    <section class="card">
+      <h2>Look up any coin <span class="mute hint">· works even if it's not in the top list</span></h2>
+      <div class="lookup-row">
+        <input id="lookup" type="text" placeholder="e.g. PEPE, WIF, DOGE">
+        <button id="lookupBtn">Check trend</button>
+      </div>
+    </section>
+    <section class="card" id="detail"><h2>Detail</h2><div class="mute">Select an asset or look one up above.</div></section>
+    <section class="card"><h2>Signal changes</h2><div class="feed" id="feed"><span class="mute">Nothing yet. Changes appear here while the page stays open.</span></div></section>
+  </div>
+</main>
+
+<script src="crypto-signals.js"></script>
+</body>
+</html>
