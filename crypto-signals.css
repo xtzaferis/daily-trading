@@ -16,8 +16,8 @@ button:disabled{opacity:.5;cursor:default}
 .spacer{flex:1}
 #status{color:var(--mute);font-size:12px;white-space:nowrap}
 
-.stats{display:flex;gap:12px;padding:12px 20px 0}
-.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;flex:1;display:flex;flex-direction:column;gap:4px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;padding:12px 20px 0}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .stat span{font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .stat b{font-size:18px}
 
@@ -28,7 +28,9 @@ main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;p
 .card h2{font-size:13px;margin:0 0 10px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .card h2 .hint{text-transform:none;letter-spacing:0;font-weight:400}
 
-table{width:100%;border-collapse:collapse}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.scroll-hint{display:none;font-size:11px;text-align:center;margin-top:4px}
+table{width:100%;min-width:680px;border-collapse:collapse}
 th{font-size:11px;color:var(--mute);text-align:right;font-weight:600;padding:6px 8px;text-transform:uppercase}
 td{padding:8px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
 th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
@@ -63,3 +65,20 @@ li{margin:2px 0}
 
 .lookup-row{display:flex;gap:8px}
 .lookup-row input{flex:1;width:auto}
+
+@media(max-width:700px){
+  body{font-size:15px}
+  header{position:static;padding:10px 14px}
+  header h1{font-size:15px}
+  .toolbar{gap:10px 12px}
+  .toolbar label{flex:1 1 100%}
+  .toolbar input,.toolbar select,.lookup-row input,input#pinned{width:100%}
+  select,input,button{font-size:16px;padding:9px 10px} /* 16px prevents iOS auto-zoom on focus */
+  .spacer{display:none}
+  #countdown,#status{white-space:normal;flex:1 1 100%;text-align:left}
+  .stats{padding:10px 14px 0}
+  main{padding:10px 14px;gap:12px}
+  .card{padding:12px}
+  .lookup-row{flex-direction:column}
+  .scroll-hint{display:block}
+}

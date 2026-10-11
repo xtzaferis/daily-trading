@@ -36,13 +36,16 @@
 <main>
   <section class="card">
     <h2>Top opportunities <span class="mute hint">· click a row for the full trade plan</span></h2>
-    <table>
-      <thead><tr>
-        <th>#</th><th>Asset</th><th>Price</th><th>24h</th><th>Trend</th><th>RSI</th><th>Score</th><th>Signal</th><th>Side</th>
-        <th title="Backtest of this exact rule set on the loaded candles">Backtest win% / trades</th>
-      </tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Asset</th><th>Price</th><th>24h</th><th>Trend</th><th>RSI</th><th>Score</th><th>Signal</th><th>Side</th>
+          <th title="Backtest of this exact rule set on the loaded candles">Backtest win% / trades</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="scroll-hint mute">← swipe to see all columns →</div>
   </section>
   <div class="right">
     <section class="card">
