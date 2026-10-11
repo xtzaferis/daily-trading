@@ -449,8 +449,7 @@ function render() {
     const flag = d.counterTrend ? '<span class="mute" title="Against the higher-timeframe trend — treat as a lower-conviction bounce, not a clean signal">⚠</span>'
       : d.htfAligned ? '<span class="up" title="Aligned with the higher-timeframe trend">✓</span>' : "";
     return `<tr data-s="${d.base}" class="${d.base === state.sel ? "sel" : ""}">
-      <td class="mute">${idx + 1}</td>
-      <td><b>${d.base}</b></td>
+      <td><span class="mute">${idx + 1}</span> <b>${d.base}</b></td>
       <td>${fmt(+t.lastPrice)}</td>
       <td class="${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</td>
       <td>${spark(d.cs)}</td>
@@ -461,7 +460,7 @@ function render() {
       <td class="mute">${bt}</td>
     </tr>`;
   }).join("");
-  $("rows").innerHTML = rows || `<tr><td colspan="10" class="mute">No pairs matched your filters. Lower min volume, widen the universe, or switch direction to "Both".</td></tr>`;
+  $("rows").innerHTML = rows || `<tr><td colspan="9" class="mute">No pairs matched your filters. Lower min volume, widen the universe, or switch direction to "Both".</td></tr>`;
   document.querySelectorAll("#rows tr[data-s]").forEach(tr => tr.onclick = () => { state.sel = tr.dataset.s; render(); });
   renderDetail();
   renderFeed();

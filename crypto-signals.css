@@ -1,6 +1,6 @@
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c232c;--line:#2a323d;--text:#e6edf3;--mute:#8b96a3;--up:#2ea36a;--down:#e5534b;--warn:#d4a72c;--acc:#4c8dff}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
 
 header{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
 header h1{font-size:16px;margin:0 12px 0 0;white-space:nowrap}
@@ -30,12 +30,15 @@ main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;p
 
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .scroll-hint{display:none;font-size:11px;text-align:center;margin-top:4px}
-table{width:100%;min-width:680px;border-collapse:collapse}
+table{width:100%;min-width:620px;border-collapse:collapse}
 th{font-size:11px;color:var(--mute);text-align:right;font-weight:600;padding:6px 8px;text-transform:uppercase}
 td{padding:8px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
-th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+/* Symbol column stays put while the rest of the table scrolls horizontally on mobile. */
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;z-index:2;background:var(--panel);box-shadow:2px 0 4px -2px rgba(0,0,0,.4)}
+th:first-child{z-index:3}
 tbody tr[data-s]{cursor:pointer}
 tbody tr[data-s]:hover,tbody tr.sel{background:var(--panel2)}
+tbody tr[data-s]:hover td:first-child,tbody tr.sel td:first-child{background:var(--panel2)}
 
 .up{color:var(--up)}
 .down{color:var(--down)}
@@ -81,4 +84,6 @@ li{margin:2px 0}
   .card{padding:12px}
   .lookup-row{flex-direction:column}
   .scroll-hint{display:block}
+  th,td{padding:6px}
+  table{min-width:560px}
 }
