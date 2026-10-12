@@ -1,6 +1,8 @@
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c232c;--line:#2a323d;--text:#e6edf3;--mute:#8b96a3;--up:#2ea36a;--down:#e5534b;--warn:#d4a72c;--acc:#4c8dff}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+/* overflow-x:hidden on body alone doesn't stop page-level horizontal scroll/zoom on iOS Safari — it has to be on html too. */
+html{overflow-x:hidden;width:100%}
+body{margin:0;width:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
 
 header{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
 header h1{font-size:16px;margin:0 12px 0 0;white-space:nowrap}
@@ -26,16 +28,19 @@ button:disabled{opacity:.5;cursor:default}
 .stat span{font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .stat b{font-size:18px}
 
-main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;padding:16px 20px}
+main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;padding:16px 20px;max-width:100%}
 @media(max-width:1100px){main{grid-template-columns:1fr}}
 
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
 .card h2{font-size:13px;margin:0 0 10px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .card h2 .hint{text-transform:none;letter-spacing:0;font-weight:400}
 
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .scroll-hint{display:none;font-size:11px;text-align:center;margin-top:4px}
-table{width:100%;min-width:620px;border-collapse:collapse}
+/* border-collapse:separate (not collapse) because Safari fails to keep sticky table cells
+   stuck in place when the table uses border-collapse:collapse. border-spacing:0 keeps the
+   same visual tightness as collapse would have given. */
+table{width:100%;min-width:620px;border-collapse:separate;border-spacing:0}
 th{font-size:11px;color:var(--mute);text-align:right;font-weight:600;padding:6px 8px;text-transform:uppercase}
 td{padding:8px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
 /* Symbol column stays put while the rest of the table scrolls horizontally on mobile. */
@@ -60,10 +65,10 @@ tbody tr[data-s]:hover td:first-child,tbody tr.sel td:first-child{background:var
 .bar i{position:absolute;top:0;height:100%;border-radius:3px}
 .bar::after{content:"";position:absolute;left:50%;top:-2px;width:1px;height:10px;background:var(--mute)}
 
-canvas{width:100%;height:260px;display:block}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:10px 0}
+canvas{width:100%;max-width:100%;height:260px;display:block}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;margin:10px 0}
 .kv span:nth-child(odd){color:var(--mute)}
-.kv span:nth-child(even){text-align:right;font-variant-numeric:tabular-nums}
+.kv span:nth-child(even){text-align:right;font-variant-numeric:tabular-nums;min-width:0;overflow-wrap:break-word}
 ul{margin:6px 0 0;padding-left:18px}
 li{margin:2px 0}
 .feed div{padding:5px 0;border-top:1px solid var(--line);font-size:13px}
