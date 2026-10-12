@@ -16,6 +16,11 @@ button:disabled{opacity:.5;cursor:default}
 .spacer{flex:1}
 #status{color:var(--mute);font-size:12px;white-space:nowrap}
 
+.regime{margin:12px 20px 0;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);border-left:4px solid var(--mute);font-size:13px}
+.regime.bull{border-left-color:var(--up)}
+.regime.bear{border-left-color:var(--down)}
+.regime.chop{border-left-color:var(--warn)}
+
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;padding:12px 20px 0}
 .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .stat span{font-size:11px;text-transform:uppercase;letter-spacing:.04em}
@@ -79,6 +84,7 @@ li{margin:2px 0}
   select,input,button{font-size:16px;padding:9px 10px} /* 16px prevents iOS auto-zoom on focus */
   .spacer{display:none}
   #countdown,#status{white-space:normal;flex:1 1 100%;text-align:left}
+  .regime{margin:10px 14px 0}
   .stats{padding:10px 14px 0}
   main{padding:10px 14px;gap:12px}
   .card{padding:12px}

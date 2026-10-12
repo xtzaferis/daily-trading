@@ -138,7 +138,21 @@ function divergence(c, r, i, lookback = 20) {
 
 function indicators(cs) {
   const c = cs.map(x => x.c), v = cs.map(x => x.v);
-  return { cs, c, e20: ema(c, 20), e50: ema(c, 50), r: rsi(c), m: macd(c), bb: boll(c), a: atr(cs), vm: sma(v, 20), adx: adx(cs) };
+  return { cs, c, e20: ema(c, 20), e50: ema(c, 50), e200: ema(c, 200), r: rsi(c), m: macd(c), bb: boll(c), a: atr(cs), vm: sma(v, 20), adx: adx(cs) };
+}
+
+// Market context from BTC's own candles: the single biggest factor professional crypto
+// traders weigh before any altcoin trade — nearly everything takes its cues from BTC.
+function marketContext(btcCs) {
+  if (!btcCs || btcCs.length < 55) return null;
+  const I = indicators(btcCs), i = btcCs.length - 1;
+  if (isNaN(I.e20[i]) || isNaN(I.e50[i])) return null;
+  const lookback = 20;
+  return {
+    trend: I.e20[i] > I.e50[i] ? 1 : -1,
+    adx: isNaN(I.adx[i]) ? null : I.adx[i],
+    ret20: i >= lookback ? I.c[i] / I.c[i - lookback] - 1 : 0
+  };
 }
 
 // EMA20-vs-EMA50 trend direction on a (usually higher) timeframe's candles: 1 bullish, -1 bearish, 0 unknown.
@@ -181,6 +195,9 @@ function scoreAt(I, i) {
   else if (pb > 0.95) add(-10, "Price at upper Bollinger band");
   const vr = I.cs[i].v / I.vm[i];
   if (vr > 1.5) { const up = I.cs[i].c >= I.cs[i].o; add(up ? 10 : -10, "Volume " + vr.toFixed(1) + "x avg on " + (up ? "green" : "red") + " candle"); }
+
+  // Long-term trend filter: the classic "which side of the 200 is price on" professional bias.
+  if (!isNaN(I.e200[i])) add(c > I.e200[i] ? 8 : -8, c > I.e200[i] ? "Above EMA200 (long-term uptrend)" : "Below EMA200 (long-term downtrend)");
 
   // Divergence: price making a new extreme that momentum doesn't confirm often front-runs a reversal.
   const div = divergence(I.c, I.r, i);
@@ -227,7 +244,7 @@ function backtest(I, side = "long", enter = 25, fee = 0.001) {
   return { trades: trades.length, win: trades.length ? wins / trades.length : NaN, ret: eq - 1, bh };
 }
 
-function analyze(cs, htfTrend = 0) { // cs = closed candles; htfTrend = higher-timeframe trend direction (1/-1/0)
+function analyze(cs, htfTrend = 0, market = null) { // cs = closed candles; htfTrend = higher-timeframe trend direction (1/-1/0); market = BTC context from marketContext()
   const I = indicators(cs), i = cs.length - 1, base = scoreAt(I, i), a = I.a[i], c = I.c[i];
   let score = base.score, why = [...base.why], counterTrend = false, aligned = false;
 
@@ -236,6 +253,27 @@ function analyze(cs, htfTrend = 0) { // cs = closed candles; htfTrend = higher-t
     if (aligned) { score += score > 0 ? 8 : -8; why.push("✓ Aligned with higher-timeframe trend"); }
     else { score *= 0.5; counterTrend = true; why.push("⚠ Against the higher-timeframe trend — conviction halved, likely a counter-trend bounce"); }
   }
+
+  // Relative strength vs BTC: outperforming/underperforming the market leader over the same
+  // window. Alts that lead BTC higher (or hold up while BTC dumps) tend to keep leading.
+  if (market && i >= 20) {
+    const rs = (I.c[i] / I.c[i - 20] - 1) - market.ret20;
+    const rsPoints = Math.max(-15, Math.min(15, rs * 100));
+    if (Math.abs(rsPoints) >= 2) {
+      score += rsPoints;
+      why.push(`${rsPoints >= 0 ? "+" : ""}${Math.round(rsPoints)}  ${rsPoints >= 0 ? "Outperforming" : "Underperforming"} BTC by ${Math.abs(rs * 100).toFixed(1)}pp over 20 periods`);
+    }
+  }
+
+  // Market regime: don't fight BTC. A long in a BTC downtrend (or a short in a BTC uptrend)
+  // gets discounted; a signal that agrees with the market's own direction gets a small boost.
+  let marketAligned = null;
+  if (market && market.trend !== 0 && score !== 0) {
+    marketAligned = (score > 0 && market.trend > 0) || (score < 0 && market.trend < 0);
+    if (marketAligned) { score *= 1.1; }
+    else { score *= 0.7; why.push(`⚠ Against the overall market trend (BTC is ${market.trend > 0 ? "bullish" : "bearish"}) — discounted`); }
+  }
+
   score = Math.max(-100, Math.min(100, score));
 
   const lab = label(score);
@@ -244,7 +282,7 @@ function analyze(cs, htfTrend = 0) { // cs = closed candles; htfTrend = higher-t
     : side === "short" ? { side: "SHORT", entry: c, stop: c + 1.5 * a, t1: c - 1.5 * a, t2: c - 3 * a }
     : null;
   const bt = backtest(I, side === "short" ? "short" : "long");
-  return { I, score, why, lab, side, plan, rsi: I.r[i], trend: I.e20[i] > I.e50[i] ? 1 : -1, adx: base.adx, counterTrend, htfAligned: aligned, atr: a, cs, bt };
+  return { I, score, why, lab, side, plan, rsi: I.r[i], trend: I.e20[i] > I.e50[i] ? 1 : -1, adx: base.adx, counterTrend, htfAligned: aligned, marketAligned, atr: a, cs, bt };
 }
 
 // ---------- Binance data ----------
@@ -301,7 +339,7 @@ const fmt = p => p >= 1000 ? p.toLocaleString(undefined, { maximumFractionDigits
 const fmtUsd = n => n >= 1e9 ? "$" + (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? "$" + (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? "$" + (n / 1e3).toFixed(1) + "K" : "$" + n.toFixed(0);
 const parsePinned = str => (str || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
-const state = { data: {}, tick: {}, top: [], sel: null, pendingSelect: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {} };
+const state = { data: {}, tick: {}, top: [], sel: null, pendingSelect: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null };
 
 function renderSentimentHtml(base, d) {
   if (!d) return `<div class="mute">No perpetual futures market for ${base} on Binance, or data unavailable right now.</div>`;
@@ -355,10 +393,14 @@ async function load() {
     state.scanned = candidates.length;
 
     const htf = HTF;
-    const [klResults, htfResults] = await Promise.all([
+    const [klResults, htfResults, btcKl] = await Promise.all([
       Promise.all(candidates.map(t => fetchKlines(t.symbol, tf))),
-      Promise.all(candidates.map(t => fetchKlines(t.symbol, htf, CONFIG.htfLimit)))
+      Promise.all(candidates.map(t => fetchKlines(t.symbol, htf, CONFIG.htfLimit))),
+      fetchKlines("BTCUSDT", tf)
     ]);
+    const btcCs = btcKl ? btcKl.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1) : null;
+    state.market = marketContext(btcCs);
+
     const analyzed = [];
     candidates.forEach((t, idx) => {
       const kl = klResults[idx];
@@ -368,7 +410,7 @@ async function load() {
       const htfKl = htfResults[idx];
       const htfCs = htfKl ? htfKl.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1) : null;
       const base = t.symbol.slice(0, -4);
-      const res = analyze(cs, trendDir(htfCs));
+      const res = analyze(cs, trendDir(htfCs), state.market);
       const old = state.prev[base];
       if (old && old !== res.lab) {
         state.feed.unshift({ t: new Date(), s: base, from: old, to: res.lab });
@@ -439,6 +481,7 @@ function spark(cs) {
 }
 
 function render() {
+  renderRegime();
   renderStats();
   const rows = state.top.map((d, idx) => {
     const t = state.tick[d.base], ch = +t.priceChangePercent, w = Math.min(50, Math.abs(d.score) / 2);
@@ -463,6 +506,20 @@ function render() {
   document.querySelectorAll("#rows tr[data-s]").forEach(tr => tr.onclick = () => { state.sel = tr.dataset.s; render(); });
   renderDetail();
   renderFeed();
+}
+
+function renderRegime() {
+  const el = $("regime"); if (!el) return;
+  const m = state.market;
+  if (!m) { el.className = "regime"; el.innerHTML = '<span class="mute">Market regime: BTC data unavailable right now.</span>'; return; }
+  const chop = m.adx != null && m.adx < 18;
+  const cls = chop ? "chop" : m.trend > 0 ? "bull" : "bear";
+  const label = chop ? "Choppy / range-bound" : m.trend > 0 ? "Risk-on (BTC uptrend)" : "Risk-off (BTC downtrend)";
+  const advice = chop ? "Low-conviction environment — expect more whipsaws, consider sizing down."
+    : m.trend > 0 ? "Longs get a conviction boost, shorts are discounted — don't fight the tape."
+    : "Shorts get a conviction boost, longs are discounted — don't fight the tape.";
+  el.className = "regime " + cls;
+  el.innerHTML = `<b>Market regime: ${label}</b>${m.adx != null ? ` · BTC ADX ${m.adx.toFixed(0)}` : ""} · BTC 20d return ${m.ret20 >= 0 ? "+" : ""}${(m.ret20 * 100).toFixed(1)}% <span class="mute">— ${advice}</span>`;
 }
 
 function renderStats() {
@@ -508,7 +565,7 @@ function renderDetail() {
     <span>Buy &amp; hold, same period</span><span class="${b.bh >= 0 ? "up" : "down"}">${(b.bh * 100).toFixed(1)}%</span></div>
     <h2 style="margin-top:14px">Futures positioning <span class="mute hint">· squeeze/liquidation-risk proxy</span></h2>
     <div id="sentiment" class="mute">Loading…</div>
-    <div class="warn">Not financial advice. Backtest ignores the higher-timeframe filter above (it's single-timeframe only) and slippage/funding, and runs on a small sample — if it doesn't beat buy &amp; hold here, treat the signal with suspicion.</div>`;
+    <div class="warn">Not financial advice. Backtest ignores the higher-timeframe, BTC relative-strength, and market-regime overlays above (those are live-only) and slippage/funding, and runs on a small sample — if it doesn't beat buy &amp; hold here, treat the signal with suspicion.</div>`;
   drawChart(d);
   loadSentiment(s);
 }
@@ -520,6 +577,13 @@ function drawChart(d) {
   const N = 90, off = d.cs.length - N, cs = d.cs.slice(-N);
   const all = cs.flatMap(k => [k.h, k.l]); let mx = Math.max(...all), mn = Math.min(...all);
   if (d.plan) { mx = Math.max(mx, d.plan.t2, d.plan.stop); mn = Math.min(mn, d.plan.t2, d.plan.stop); }
+  // Only let EMA200 stretch the vertical scale if it's reasonably close — far away (deep in
+  // a trend) it would squash the candles flat, so it's skipped off-screen in that case instead.
+  const e200vals = cs.map((_, i) => d.I.e200[off + i]).filter(v => !isNaN(v));
+  if (e200vals.length) {
+    const range = mx - mn, e200min = Math.min(...e200vals), e200max = Math.max(...e200vals);
+    if (e200max <= mx + range * 1.5 && e200min >= mn - range * 1.5) { mx = Math.max(mx, e200max); mn = Math.min(mn, e200min); }
+  }
   const y = v => 8 + (mx - v) / (mx - mn) * (H - 16), bw = W / N;
   cs.forEach((k, i) => {
     const x = i * bw + bw / 2, up = k.c >= k.o;
@@ -527,7 +591,7 @@ function drawChart(d) {
     g.beginPath(); g.moveTo(x, y(k.h)); g.lineTo(x, y(k.l)); g.stroke();
     g.fillRect(x - bw * 0.35, Math.min(y(k.o), y(k.c)), bw * 0.7, Math.max(1, Math.abs(y(k.o) - y(k.c))));
   });
-  [[d.I.e20, "#4c8dff"], [d.I.e50, "#d4a72c"]].forEach(([arr, col]) => {
+  [[d.I.e20, "#4c8dff"], [d.I.e50, "#d4a72c"], [d.I.e200, "#a371f7"]].forEach(([arr, col]) => {
     g.strokeStyle = col; g.lineWidth = 1.3; g.beginPath();
     cs.forEach((_, i) => { const v = arr[off + i]; if (isNaN(v)) return; const x = i * bw + bw / 2; i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
     g.stroke();
