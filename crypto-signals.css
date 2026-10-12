@@ -1,7 +1,10 @@
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c232c;--line:#2a323d;--text:#e6edf3;--mute:#8b96a3;--up:#2ea36a;--down:#e5534b;--warn:#d4a72c;--acc:#4c8dff}
 *{box-sizing:border-box}
-/* overflow-x:hidden on body alone doesn't stop page-level horizontal scroll/zoom on iOS Safari — it has to be on html too. */
-html{overflow-x:hidden;width:100%}
+/* NOTE: overflow-x:hidden on html (not just body) was tried here to stop page-level
+   horizontal zoom on iOS, but it also blocked touch-scrolling inside .table-wrap — reverted.
+   The real fix for page-level overflow is the max-width:100%/min-width:0 guards below,
+   which contain content without disabling scroll on elements that are meant to scroll. */
+html{width:100%}
 body{margin:0;width:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
 
 header{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
