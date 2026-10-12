@@ -15,12 +15,11 @@ const CONFIG = {
   topN: 10
 };
 
-// Higher timeframe used to confirm/veto each signal's timeframe, so a bounce on a
-// small timeframe that fights the bigger trend gets discounted instead of shown as clean.
-const HTF_MAP = { "5m": "15m", "15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w" };
-
-// Candle span in ms, used to show when the current signal will next actually change.
-const TF_MS = { "5m": 5 * 60000, "15m": 15 * 60000, "1h": 3600000, "4h": 4 * 3600000, "1d": 86400000 };
+// Daily-close dashboard: one signal per coin per day, confirmed against the weekly trend
+// so a daily bounce that fights the bigger trend gets discounted instead of shown as clean.
+const TF = "1d";
+const HTF = "1w";
+const TF_SPAN_MS = 86400000; // used to show when the daily candle (00:00 UTC) next closes
 
 // Exclude stablecoin pairs and leveraged tokens — they don't trend like normal assets.
 const STABLE_BASES = new Set([
@@ -336,7 +335,7 @@ async function load() {
   $("status").textContent = "Scanning market…";
   $("refresh").disabled = true;
   try {
-    const tf = $("tf").value;
+    const tf = TF;
     const all = await getJSON("/api/v3/ticker/24hr");
     const minVol = +$("minVol").value || CONFIG.minQuoteVolume;
     const poolSize = Math.max(1, +$("poolSize").value || CONFIG.poolSize);
@@ -355,7 +354,7 @@ async function load() {
     });
     state.scanned = candidates.length;
 
-    const htf = HTF_MAP[tf] || tf;
+    const htf = HTF;
     const [klResults, htfResults] = await Promise.all([
       Promise.all(candidates.map(t => fetchKlines(t.symbol, tf))),
       Promise.all(candidates.map(t => fetchKlines(t.symbol, htf, CONFIG.htfLimit)))
@@ -410,25 +409,25 @@ async function load() {
   scheduleCloseRefresh();
 }
 
-// Scores only change when a candle actually closes, so instead of waiting on the next
-// 60s poll, schedule one extra refresh right at the current timeframe's next candle close.
+// Scores only change once a day, when the daily candle closes at 00:00 UTC, so instead of
+// waiting on the next 60s poll, schedule one extra refresh right at that close.
 let closeTimer = null;
-function msToNextClose(tf) { const span = TF_MS[tf] || 3600000; return span - (Date.now() % span); }
+function msToNextClose() { return TF_SPAN_MS - (Date.now() % TF_SPAN_MS); }
 function scheduleCloseRefresh() {
   if (closeTimer) clearTimeout(closeTimer);
-  closeTimer = setTimeout(load, msToNextClose($("tf").value) + 1500); // small buffer for Binance to publish the closed candle
+  closeTimer = setTimeout(load, msToNextClose() + 1500); // small buffer for Binance to publish the closed candle
 }
 function updateCountdown() {
-  const tf = $("tf").value, totalSec = Math.max(0, Math.floor(msToNextClose(tf) / 1000));
+  const totalSec = Math.max(0, Math.floor(msToNextClose() / 1000));
   const h = Math.floor(totalSec / 3600), m = Math.floor((totalSec % 3600) / 60), s = totalSec % 60;
-  const t = h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
-  $("countdown").textContent = `Next ${tf} candle closes in ${t} — signals update then`;
+  const t = `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  $("countdown").textContent = `Daily candle (00:00 UTC) closes in ${t} — signals update then`;
 }
 
 function notify(s, from, to) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   if (to === "SB" || to === "SS" || from === "SB" || from === "SS")
-    new Notification(s + ": " + labelText[to], { body: "Was " + labelText[from] + " · " + $("tf").value });
+    new Notification(s + ": " + labelText[to], { body: "Was " + labelText[from] + " · daily" });
 }
 
 // ---------- rendering ----------
@@ -501,7 +500,7 @@ function renderDetail() {
       <div class="mute" style="font-size:12px">${tip}</div>`;
   }
   const b = d.bt;
-  $("detail").innerHTML = `<h2>${s}/USDT · ${$("tf").value}</h2><canvas id="ch"></canvas>
+  $("detail").innerHTML = `<h2>${s}/USDT · daily</h2><canvas id="ch"></canvas>
     ${planHtml}<h2 style="margin-top:14px">Why this score</h2><ul>${d.why.map(w => `<li>${w}</li>`).join("")}</ul>
     <h2 style="margin-top:14px">Backtest (${d.side === "short" ? "short" : "long"}-side, same rules)</h2>
     <div class="kv"><span>Trades</span><span>${b.trades}</span><span>Win rate</span><span>${b.trades ? (b.win * 100).toFixed(0) + "%" : "–"}</span>
@@ -543,7 +542,7 @@ function drawChart(d) {
 
 // ---------- wiring ----------
 function init() {
-  ["tf", "poolSize", "minVol", "dir", "pinned", "topN"].forEach(id => $(id).onchange = load);
+  ["poolSize", "minVol", "dir", "pinned", "topN"].forEach(id => $(id).onchange = load);
   $("refresh").onclick = load;
   $("acct").oninput = renderDetail;
   $("risk").oninput = renderDetail;
