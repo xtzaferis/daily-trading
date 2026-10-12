@@ -47,9 +47,17 @@
   </section>
   <div class="right">
     <section class="card">
-      <h2>Look up any coin <span class="mute hint">· works even if it's not in the top list</span></h2>
+      <h2>Look up any coin <span class="mute hint">· any timeframe, independent of the daily ranking above</span></h2>
       <div class="lookup-row">
         <input id="lookup" type="text" placeholder="e.g. PEPE, WIF, DOGE">
+        <select id="lookupTf">
+          <option value="5m">5m</option>
+          <option value="15m">15m</option>
+          <option value="1h" selected>1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+          <option value="1w">1w</option>
+        </select>
         <button id="lookupBtn">Check trend</button>
       </div>
     </section>

@@ -21,6 +21,10 @@ const TF = "1d";
 const HTF = "1w";
 const TF_SPAN_MS = 86400000; // used to show when the daily candle (00:00 UTC) next closes
 
+// The "look up any coin" box can check any timeframe, independent of the daily ranking
+// above. Each one is confirmed against its own next-higher timeframe, same logic as daily/weekly.
+const LOOKUP_HTF_MAP = { "5m": "15m", "15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w", "1w": "1M" };
+
 // Exclude stablecoin pairs and leveraged tokens — they don't trend like normal assets.
 const STABLE_BASES = new Set([
   "USDC","FDUSD","TUSD","DAI","USDP","BUSD","EUR","GBP","TRY","BRL","AUD",
@@ -339,7 +343,8 @@ const fmt = p => p >= 1000 ? p.toLocaleString(undefined, { maximumFractionDigits
 const fmtUsd = n => n >= 1e9 ? "$" + (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? "$" + (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? "$" + (n / 1e3).toFixed(1) + "K" : "$" + n.toFixed(0);
 const parsePinned = str => (str || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
-const state = { data: {}, tick: {}, top: [], sel: null, pendingSelect: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null };
+const state = { data: {}, tick: {}, top: [], sel: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null, lookup: null, lookupActive: false };
+const activeDetailBase = () => state.lookupActive ? state.lookup?.base : state.sel;
 
 function renderSentimentHtml(base, d) {
   if (!d) return `<div class="mute">No perpetual futures market for ${base} on Binance, or data unavailable right now.</div>`;
@@ -357,11 +362,31 @@ function renderSentimentHtml(base, d) {
     <div class="mute" style="font-size:12px">${skew} Sentiment proxy only, not an exact liquidation price map — Binance doesn't publish market-wide liquidation levels publicly.</div>`;
 }
 
+// Ad-hoc trend check for a specific coin at a chosen timeframe, fully independent of the
+// daily ranking above (its own HTF confirmation and its own BTC market context at that timeframe).
+async function runCoinLookup(base, tf) {
+  const sym = base + "USDT";
+  const htf = LOOKUP_HTF_MAP[tf] || tf;
+  const [kl, htfKl, btcKl] = await Promise.all([
+    fetchKlines(sym, tf),
+    fetchKlines(sym, htf, CONFIG.htfLimit),
+    fetchKlines("BTCUSDT", tf)
+  ]);
+  if (!kl || kl.length < 60) return { error: `"${sym}" not found on Binance, or not enough ${tf} history yet.` };
+  const toCandles = raw => raw.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1);
+  const cs = toCandles(kl);
+  if (cs.length < 55) return { error: `Not enough ${tf} history for ${sym} yet.` };
+  const htfCs = htfKl ? toCandles(htfKl) : null;
+  const btcCs = btcKl ? toCandles(btcKl) : null;
+  const res = analyze(cs, trendDir(htfCs), marketContext(btcCs));
+  return { ...res, base, tf };
+}
+
 async function loadSentiment(base) {
   const cached = state.sentiment[base];
   if (cached && Date.now() - cached.ts < 25000) { const el = $("sentiment"); if (el) el.innerHTML = cached.html; return; }
   const data = await fetchSentiment(base + "USDT");
-  if (state.sel !== base) return; // selection changed while the request was in flight
+  if (activeDetailBase() !== base) return; // selection changed while the request was in flight
   const html = renderSentimentHtml(base, data);
   state.sentiment[base] = { html, ts: Date.now() };
   const el = $("sentiment"); if (el) el.innerHTML = html;
@@ -380,14 +405,14 @@ async function load() {
     const filtered = filterUniverse(all, minVol);
     const candidates = filtered.slice(0, poolSize);
 
-    // Always include pinned/looked-up symbols even if they fall outside the volume/pool cutoff.
-    let lookupNotFound = null;
+    // Always include pinned symbols even if they fall outside the volume/pool cutoff.
+    let pinnedNotFound = null;
     parsePinned($("pinned").value).forEach(base => {
       const sym = base + "USDT";
       if (!candidates.some(c => c.symbol === sym)) {
         const t = all.find(x => x.symbol === sym);
         if (t) candidates.push(t);
-        else if (base === state.pendingSelect) lookupNotFound = base;
+        else pinnedNotFound = base;
       }
     });
     state.scanned = candidates.length;
@@ -431,18 +456,14 @@ async function load() {
     const topN = Math.max(1, +$("topN").value || CONFIG.topN);
     state.top = ranked.slice(0, topN);
 
-    if (state.pendingSelect) {
-      if (state.data[state.pendingSelect]) state.sel = state.pendingSelect;
-      state.pendingSelect = null;
-    }
-    // Keep the current selection sticky as long as it's still in the scanned pool (e.g. a
-    // looked-up or pinned coin that isn't a top-ranked opportunity) — only fall back to
-    // the #1 opportunity if the selection no longer exists at all.
-    if (!state.data[state.sel]) state.sel = state.top[0]?.base || null;
+    // Keep the current table selection sticky as long as it's still in the scanned pool (e.g.
+    // a pinned coin that isn't a top-ranked opportunity) — only fall back to the #1
+    // opportunity if the selection no longer exists at all. Leaves an active coin lookup alone.
+    if (!state.lookupActive && !state.data[state.sel]) state.sel = state.top[0]?.base || null;
 
     state.lastUpdate = new Date();
     $("status").textContent = "Updated " + state.lastUpdate.toLocaleTimeString() + " · scanned " + state.scanned + " pairs"
-      + (lookupNotFound ? ` · "${lookupNotFound}USDT" not found on Binance` : "");
+      + (pinnedNotFound ? ` · "${pinnedNotFound}USDT" not found on Binance` : "");
   } catch (e) {
     $("status").textContent = "Data error: " + e.message + " (Binance may be blocked on your network)";
   }
@@ -503,7 +524,7 @@ function render() {
     </tr>`;
   }).join("");
   $("rows").innerHTML = rows || `<tr><td colspan="9" class="mute">No pairs matched your filters. Lower min volume, widen the universe, or switch direction to "Both".</td></tr>`;
-  document.querySelectorAll("#rows tr[data-s]").forEach(tr => tr.onclick = () => { state.sel = tr.dataset.s; render(); });
+  document.querySelectorAll("#rows tr[data-s]").forEach(tr => tr.onclick = () => { state.sel = tr.dataset.s; state.lookupActive = false; render(); });
   renderDetail();
   renderFeed();
 }
@@ -539,8 +560,8 @@ function renderFeed() {
 }
 
 function renderDetail() {
-  const s = state.sel, d = state.data[s];
-  if (!d) { $("detail").innerHTML = '<h2>Detail</h2><div class="mute">No opportunity selected. Adjust filters or wait for the next scan.</div>'; return; }
+  const s = activeDetailBase(), d = state.lookupActive ? state.lookup : state.data[s];
+  if (!d) { $("detail").innerHTML = '<h2>Detail</h2><div class="mute">No opportunity selected. Adjust filters, look up a coin, or wait for the next scan.</div>'; return; }
   const acct = +$("acct").value || 0, risk = (+$("risk").value || 0) / 100;
   let planHtml = '<div class="mute" style="margin-top:8px">No trade: score is between −20 and +20. Waiting is a position.</div>';
   if (d.plan) {
@@ -557,7 +578,8 @@ function renderDetail() {
       <div class="mute" style="font-size:12px">${tip}</div>`;
   }
   const b = d.bt;
-  $("detail").innerHTML = `<h2>${s}/USDT · daily</h2><canvas id="ch"></canvas>
+  const tfLabel = state.lookupActive ? state.lookup.tf : "daily";
+  $("detail").innerHTML = `<h2>${s}/USDT · ${tfLabel}</h2><canvas id="ch"></canvas>
     ${planHtml}<h2 style="margin-top:14px">Why this score</h2><ul>${d.why.map(w => `<li>${w}</li>`).join("")}</ul>
     <h2 style="margin-top:14px">Backtest (${d.side === "short" ? "short" : "long"}-side, same rules)</h2>
     <div class="kv"><span>Trades</span><span>${b.trades}</span><span>Win rate</span><span>${b.trades ? (b.win * 100).toFixed(0) + "%" : "–"}</span>
@@ -615,14 +637,18 @@ function init() {
     const p = await Notification.requestPermission();
     $("alerts").textContent = p === "granted" ? "Alerts on" : "Alerts blocked";
   };
-  const runLookup = () => {
+  const runLookup = async () => {
     const base = $("lookup").value.trim().toUpperCase().replace(/USDT$/, "").replace(/[^A-Z0-9]/g, "");
     if (!base) return;
-    const pinned = parsePinned($("pinned").value);
-    if (!pinned.includes(base)) { pinned.push(base); $("pinned").value = pinned.join(","); }
-    state.pendingSelect = base;
+    const tf = $("lookupTf").value;
+    $("lookupBtn").disabled = true; $("lookupBtn").textContent = "Checking…";
+    const result = await runCoinLookup(base, tf);
+    $("lookupBtn").disabled = false; $("lookupBtn").textContent = "Check trend";
+    if (result.error) { $("detail").innerHTML = `<h2>Detail</h2><div class="mute">${result.error}</div>`; return; }
+    state.lookup = result;
+    state.lookupActive = true;
     $("lookup").value = "";
-    load();
+    renderDetail();
   };
   $("lookupBtn").onclick = runLookup;
   $("lookup").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); runLookup(); } });
