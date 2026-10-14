@@ -763,6 +763,11 @@ function init() {
     const p = await Notification.requestPermission();
     $("alerts").textContent = p === "granted" ? "Alerts on" : "Alerts blocked";
   };
+  $("advToggle").onclick = () => {
+    const open = document.querySelector(".toolbar").classList.toggle("adv-open");
+    $("advToggle").setAttribute("aria-expanded", open);
+    $("advToggle").textContent = open ? "Less ▲" : "More ▾";
+  };
   const runLookup = async () => {
     const base = $("lookup").value.trim().toUpperCase().replace(/USDT$/, "").replace(/[^A-Z0-9]/g, "");
     if (!base) return;
