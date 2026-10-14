@@ -26,9 +26,17 @@ const TF_MS = { "5m": 5 * 60000, "15m": 15 * 60000, "1h": 3600000, "4h": 4 * 360
 const STABLE_BASES = new Set([
   "USDC","FDUSD","TUSD","DAI","USDP","BUSD","EUR","GBP","TRY","BRL","AUD",
   "GYEN","USTC","UST","USDD","USDJ","PAX","EURI","XUSD","USD1","USDE",
-  "PYUSD","USDS","FRAX","GUSD","LUSD","USDX","EURC","AEUR"
+  "PYUSD","USDS","FRAX","GUSD","LUSD","USDX","EURC","AEUR","RLUSD"
 ]);
 const LEVERAGED_RE = /(UP|DOWN|BULL|BEAR)USDT$/;
+
+// Meme-coin bases. Binance's API has no category tags, so this is a curated list; only the
+// ones actually listed and liquid enough get picked (top by volume). Extend as new memes appear.
+const MEME_BASES = new Set([
+  "DOGE","SHIB","PEPE","WIF","BONK","FLOKI","BOME","MEME","POPCAT","MEW","BRETT","TURBO",
+  "NEIRO","DOGS","PNUT","ACT","MOODENG","GOAT","SPX","FARTCOIN","AI16Z","PENGU","TRUMP",
+  "MOG","BABYDOGE","CHILLGUY","PEOPLE","ORDI","1000SATS","MUBARAK","BANANAS31","TST","CHEEMS"
+]);
 
 // ---------- indicators ----------
 const sma = (v, p) => v.map((_, i) => {
@@ -424,11 +432,32 @@ function filterUniverse(all, minVol) {
   }).sort((a, b) => +b.quoteVolume - +a.quoteVolume);
 }
 
+// Build the scan set. "volume" = top `poolSize` by liquidity (simple, broad). "curated" =
+// a day-trader's shortlist: the biggest coins + the most-traded memes + today's top movers,
+// which surfaces intraday opportunity that a pure volume sort misses (a meme pumping 40%
+// rarely has top-40 volume). Returns { list, cat } where cat maps symbol -> major|meme|trend.
+function buildUniverse(all, mode, minVol, poolSize) {
+  const eligible = filterUniverse(all, minVol); // already sorted by volume desc
+  const cat = {};
+  if (mode !== "curated") {
+    const list = eligible.slice(0, poolSize);
+    list.forEach(t => cat[t.symbol] = "major");
+    return { list, cat };
+  }
+  const list = [], seen = new Set();
+  const add = (t, c) => { if (t && !seen.has(t.symbol)) { seen.add(t.symbol); list.push(t); cat[t.symbol] = c; } };
+  eligible.slice(0, 20).forEach(t => add(t, "major"));                                  // 20 majors by volume
+  eligible.filter(t => MEME_BASES.has(t.symbol.slice(0, -4))).slice(0, 10).forEach(t => add(t, "meme")); // top 10 memes
+  eligible.slice().sort((a, b) => +b.priceChangePercent - +a.priceChangePercent)        // 5 top 24h gainers
+    .slice(0, 5).forEach(t => add(t, "trend"));
+  return { list, cat };
+}
+
 const fmt = p => p >= 1000 ? p.toLocaleString(undefined, { maximumFractionDigits: 1 }) : p >= 1 ? p.toFixed(3) : p.toFixed(6);
 const fmtUsd = n => n >= 1e9 ? "$" + (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? "$" + (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? "$" + (n / 1e3).toFixed(1) + "K" : "$" + n.toFixed(0);
 const parsePinned = str => (str || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
-const state = { data: {}, tick: {}, top: [], sel: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null, lookup: null, lookupActive: false, edge: null };
+const state = { data: {}, tick: {}, top: [], sel: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null, lookup: null, lookupActive: false, edge: null, cat: {} };
 const activeDetailBase = () => state.lookupActive ? state.lookup?.base : state.sel;
 
 function renderSentimentHtml(base, d) {
@@ -488,16 +517,17 @@ async function load() {
     const all = await getJSON("/api/v3/ticker/24hr");
     const minVol = +$("minVol").value || CONFIG.minQuoteVolume;
     const poolSize = Math.max(1, +$("poolSize").value || CONFIG.poolSize);
-    const filtered = filterUniverse(all, minVol);
-    const candidates = filtered.slice(0, poolSize);
+    const mode = $("universe") ? $("universe").value : "volume";
+    const { list: candidates, cat } = buildUniverse(all, mode, minVol, poolSize);
+    state.cat = cat;
 
-    // Always include pinned symbols even if they fall outside the volume/pool cutoff.
+    // Always include pinned symbols even if they fall outside the chosen universe.
     let pinnedNotFound = null;
     parsePinned($("pinned").value).forEach(base => {
       const sym = base + "USDT";
       if (!candidates.some(c => c.symbol === sym)) {
         const t = all.find(x => x.symbol === sym);
-        if (t) candidates.push(t);
+        if (t) { candidates.push(t); cat[sym] = cat[sym] || "watch"; }
         else pinnedNotFound = base;
       }
     });
@@ -623,8 +653,10 @@ function render() {
     const sideTag = d.side === "long" ? '<b class="up">LONG</b>' : d.side === "short" ? '<b class="down">SHORT</b>' : '<span class="mute">WAIT</span>';
     const flag = d.counterTrend ? '<span class="mute" title="Against the higher-timeframe trend — treat as a lower-conviction bounce, not a clean signal">⚠</span>'
       : d.htfAligned ? '<span class="up" title="Aligned with the higher-timeframe trend">✓</span>' : "";
+    const c = state.cat[d.base + "USDT"];
+    const catChip = c && c !== "major" ? `<span class="cat cat-${c}">${c === "trend" ? "trending" : c}</span>` : "";
     return `<tr data-s="${d.base}" class="${d.base === state.sel ? "sel" : ""}">
-      <td data-label="#"><span class="rank">${idx + 1}</span> <b>${d.base}</b></td>
+      <td data-label="#"><span class="rank">${idx + 1}</span> <b>${d.base}</b>${catChip}</td>
       <td data-label="Price">${fmt(+t.lastPrice)}</td>
       <td data-label="24h" class="${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</td>
       <td data-label="Trend">${spark(d.cs)}</td>
@@ -786,7 +818,7 @@ function drawChart(d) {
 
 // ---------- wiring ----------
 function init() {
-  ["tf", "poolSize", "minVol", "dir", "pinned", "topN"].forEach(id => $(id).onchange = load);
+  ["tf", "universe", "poolSize", "minVol", "dir", "pinned", "topN"].forEach(id => $(id).onchange = load);
   $("refresh").onclick = load;
   $("acct").oninput = renderDetail;
   $("risk").oninput = renderDetail;

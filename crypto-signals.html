@@ -17,13 +17,19 @@
     <label>Timeframe
       <select id="tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d" selected>1d</option><option value="1w">1w</option></select>
     </label>
+    <label>Universe
+      <select id="universe" title="What to scan: a curated day-trader shortlist, or simply the most liquid pairs">
+        <option value="curated" selected>Majors + memes + trending</option>
+        <option value="volume">Top by volume</option>
+      </select>
+    </label>
     <label>Direction
       <select id="dir"><option value="both" selected>Long + Short</option><option value="long">Long only</option><option value="short">Short only</option></select>
     </label>
     <button id="refresh">Refresh</button>
     <button id="advToggle" type="button" aria-expanded="false">More ▾</button>
     <div class="adv" id="adv">
-      <label title="How many of the most liquid USDT pairs to scan each refresh">Universe size<input id="poolSize" type="number" value="40" min="5" max="150" step="5"></label>
+      <label title="Only used when Universe = Top by volume: how many of the most liquid pairs to scan">Universe size<input id="poolSize" type="number" value="40" min="5" max="150" step="5"></label>
       <label title="Minimum 24h quote volume (USDT) for a pair to be eligible">Min 24h vol (USDT)<input id="minVol" type="number" value="5000000" step="1000000"></label>
       <label title="Show this many top-ranked opportunities">Top N<input id="topN" type="number" value="10" min="1" max="50"></label>
       <label title="Comma-separated symbols always included, e.g. PEPE,WIF">Watch extra<input id="pinned" type="text" placeholder="e.g. PEPE,WIF"></label>
@@ -35,7 +41,7 @@
     <span id="countdown" class="mute"></span>
     <span id="status">Loading…</span>
   </div>
-  <div class="sub">Scans liquid Binance USDT pairs on the chosen timeframe's close and ranks the strongest long and short setups · signals use closed candles only</div>
+  <div class="sub">Scans a curated set — major coins, top memes and today's trending movers — on the chosen timeframe's close and ranks the strongest long and short setups · signals use closed candles only</div>
 </header>
 
 <div class="regime" id="regime"></div>

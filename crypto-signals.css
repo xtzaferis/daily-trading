@@ -116,6 +116,11 @@ tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--acc), 6px 0 10px -8px
 .S{background:rgba(240,97,109,.12); color:#f0776f}
 .SS{background:rgba(240,97,109,.2); color:#ff8a82; box-shadow:inset 0 0 0 1px rgba(240,97,109,.3)}
 
+.cat{display:inline-block; margin-left:7px; padding:1px 7px; border-radius:6px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; vertical-align:middle}
+.cat-meme{background:rgba(224,179,65,.16); color:#e6c04f}
+.cat-trend{background:rgba(76,141,255,.16); color:var(--acc-2)}
+.cat-watch{background:var(--surface-2); color:var(--mute)}
+
 .bar{width:64px; height:6px; background:var(--line); border-radius:3px; position:relative; display:inline-block; vertical-align:middle; margin-right:8px; overflow:hidden}
 .bar i{position:absolute; top:0; height:100%; border-radius:3px}
 .bar::after{content:""; position:absolute; left:50%; top:-2px; width:1px; height:10px; background:var(--mute); opacity:.5}
