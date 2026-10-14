@@ -91,11 +91,12 @@ function atr(cs, p = 14) {
   return o;
 }
 
-// Wilder's ADX — measures trend STRENGTH (not direction). Low ADX = choppy/range-bound,
-// where EMA/MACD trend-following signals whipsaw and should be trusted less.
-function adx(cs, p = 14) {
-  const n = cs.length, out = Array(n).fill(NaN);
-  if (n <= p + 1) return out;
+// Wilder's DMI — ADX measures trend STRENGTH (not direction); DI+/DI- give direction.
+// Low ADX = choppy/range-bound, where EMA/MACD trend-following signals whipsaw and should
+// be trusted less. DI+ > DI- = bullish directional pressure, DI- > DI+ = bearish.
+function dmi(cs, p = 14) {
+  const n = cs.length, adx = Array(n).fill(NaN), diPlus = Array(n).fill(NaN), diMinus = Array(n).fill(NaN);
+  if (n <= p + 1) return { adx, diPlus, diMinus };
   const plusDM = [], minusDM = [], tr = [];
   for (let i = 1; i < n; i++) {
     const up = cs[i].h - cs[i - 1].h, down = cs[i - 1].l - cs[i].l;
@@ -111,14 +112,40 @@ function adx(cs, p = 14) {
     return o;
   };
   const trS = wilderSmooth(tr), pdmS = wilderSmooth(plusDM), mdmS = wilderSmooth(minusDM);
-  const dx = trS.map((v, i) => isNaN(v) ? NaN : 100 * Math.abs(pdmS[i] - mdmS[i]) / (v || 1e-9));
+  const diP = trS.map((v, i) => isNaN(v) ? NaN : 100 * pdmS[i] / (v || 1e-9));
+  const diM = trS.map((v, i) => isNaN(v) ? NaN : 100 * mdmS[i] / (v || 1e-9));
+  const dx = trS.map((v, i) => isNaN(v) ? NaN : 100 * Math.abs(pdmS[i] - mdmS[i]) / ((pdmS[i] + mdmS[i]) || 1e-9));
   const firstValid = dx.findIndex(x => !isNaN(x));
   if (firstValid >= 0 && dx.length >= firstValid + p) {
     let s = 0; for (let i = firstValid; i < firstValid + p; i++) s += dx[i];
-    let a = s / p; out[firstValid + p] = a; // +1 to realign: tr/dm arrays are shifted by one candle
-    for (let i = firstValid + p; i < dx.length; i++) { a = (a * (p - 1) + dx[i]) / p; out[i + 1] = a; }
+    let a = s / p; adx[firstValid + p] = a; // +1 to realign: tr/dm arrays are shifted by one candle
+    for (let i = firstValid + p; i < dx.length; i++) { a = (a * (p - 1) + dx[i]) / p; adx[i + 1] = a; }
   }
-  return out;
+  for (let i = 0; i < diP.length; i++) { diPlus[i + 1] = diP[i]; diMinus[i + 1] = diM[i]; } // same +1 realignment
+  return { adx, diPlus, diMinus };
+}
+
+// On-Balance Volume — running total that adds a candle's volume on up-closes and subtracts
+// it on down-closes. Rising OBV = accumulation, falling = distribution. Orthogonal to price
+// momentum: it confirms (or quietly contradicts) a move using where the volume actually went.
+function obv(cs) {
+  const o = Array(cs.length).fill(0);
+  for (let i = 1; i < cs.length; i++) o[i] = o[i - 1] + (cs[i].c > cs[i - 1].c ? cs[i].v : cs[i].c < cs[i - 1].c ? -cs[i].v : 0);
+  return o;
+}
+
+// Stochastic RSI — where RSI sits within its own recent range (0-1). Far more sensitive than
+// raw RSI, so it flags momentum exhaustion/turns earlier. %K smoothed, %D is %K's average.
+function stochRsi(rArr, p = 14) {
+  const n = rArr.length, raw = Array(n).fill(NaN);
+  for (let i = 0; i < n; i++) {
+    if (i < p - 1 || isNaN(rArr[i])) continue;
+    let lo = Infinity, hi = -Infinity, ok = true;
+    for (let j = i - p + 1; j <= i; j++) { if (isNaN(rArr[j])) { ok = false; break; } lo = Math.min(lo, rArr[j]); hi = Math.max(hi, rArr[j]); }
+    if (ok) raw[i] = hi > lo ? (rArr[i] - lo) / (hi - lo) : 0;
+  }
+  const k = sma(raw, 3), d = sma(k, 3);
+  return { k, d };
 }
 
 // Simplified RSI divergence: compares the current bar to the most extreme bar in the
@@ -139,7 +166,10 @@ function divergence(c, r, i, lookback = 20) {
 
 function indicators(cs) {
   const c = cs.map(x => x.c), v = cs.map(x => x.v);
-  return { cs, c, e20: ema(c, 20), e50: ema(c, 50), e200: ema(c, 200), r: rsi(c), m: macd(c), bb: boll(c), a: atr(cs), vm: sma(v, 20), adx: adx(cs) };
+  const r = rsi(c), bb = boll(c), d = dmi(cs), ob = obv(cs);
+  const bbw = bb.mid.map((m, i) => isNaN(m) ? NaN : (bb.up[i] - bb.lo[i]) / (m || 1e-9)); // band width ratio, for squeeze detection
+  return { cs, c, e20: ema(c, 20), e50: ema(c, 50), e200: ema(c, 200), r, m: macd(c), bb, bbw, a: atr(cs), vm: sma(v, 20),
+    adx: d.adx, diPlus: d.diPlus, diMinus: d.diMinus, sr: stochRsi(r), obv: ob, obvE: ema(ob, 20) };
 }
 
 // Market context from BTC's own candles: the single biggest factor professional crypto
@@ -200,6 +230,38 @@ function scoreAt(I, i) {
   // Long-term trend filter: the classic "which side of the 200 is price on" professional bias.
   if (!isNaN(I.e200[i])) add(c > I.e200[i] ? 8 : -8, c > I.e200[i] ? "Above EMA200 (long-term uptrend)" : "Below EMA200 (long-term downtrend)");
 
+  // --- Orthogonal confirmers (added on top of the trend/momentum core; validated to lift
+  // backtested profit factor rather than just adding noise). Each measures something the
+  // EMA/MACD block doesn't: direction strength, momentum extremes, accumulation, volatility. ---
+
+  // DI+/DI-: directional pressure from the DMI. Agrees with trend most of the time, but turns early.
+  if (!isNaN(I.diPlus[i]) && !isNaN(I.diMinus[i]))
+    add(I.diPlus[i] > I.diMinus[i] ? 6 : -6, I.diPlus[i] > I.diMinus[i] ? "DI+ above DI- (buyers in control)" : "DI- above DI+ (sellers in control)");
+
+  // Stochastic RSI extremes: sharper exhaustion read than raw RSI.
+  const sk = I.sr.k[i];
+  if (!isNaN(sk)) {
+    if (sk < 0.2) add(6, "StochRSI " + sk.toFixed(2) + " oversold (early bounce)");
+    else if (sk > 0.8) add(-6, "StochRSI " + sk.toFixed(2) + " overbought (early pullback)");
+  }
+
+  // OBV vs its EMA: is volume flowing in (accumulation) or out (distribution)?
+  if (!isNaN(I.obvE[i]))
+    add(I.obv[i] > I.obvE[i] ? 6 : -6, I.obv[i] > I.obvE[i] ? "OBV rising (accumulation)" : "OBV falling (distribution)");
+
+  // Bollinger squeeze breakout: when band width is in the bottom 25% of its recent range
+  // (volatility coiled), a push to the band edge is a high-quality breakout, not noise.
+  if (!isNaN(I.bbw[i]) && i >= 50) {
+    const w = I.bbw.slice(i - 49, i + 1).filter(x => !isNaN(x));
+    if (w.length > 20) {
+      const q = [...w].sort((a, b) => a - b)[Math.floor(w.length * 0.25)];
+      if (I.bbw[i] <= q) {
+        if (pb > 0.85) add(8, "Breakout from a Bollinger squeeze (volatility expanding up)");
+        else if (pb < 0.15) add(-8, "Breakdown from a Bollinger squeeze (volatility expanding down)");
+      }
+    }
+  }
+
   // Divergence: price making a new extreme that momentum doesn't confirm often front-runs a reversal.
   const div = divergence(I.c, I.r, i);
   if (div.bearish) add(-12, "Bearish RSI divergence — new price high not confirmed by momentum");
@@ -240,9 +302,16 @@ function backtest(I, side = "long", enter = 25, fee = 0.001) {
       pos = { entry: I.c[i], stop: I.c[i] + 1.5 * I.a[i] };
     }
   }
-  const wins = trades.filter(x => x > 0).length;
+  const wins = trades.filter(x => x > 0);
+  const grossWin = wins.reduce((a, b) => a + b, 0), grossLoss = -trades.filter(x => x <= 0).reduce((a, b) => a + b, 0);
   const bh = side === "long" ? I.c[n - 1] / I.c[50] - 1 : I.c[50] / I.c[n - 1] - 1;
-  return { trades: trades.length, win: trades.length ? wins / trades.length : NaN, ret: eq - 1, bh };
+  return {
+    trades: trades.length,
+    win: trades.length ? wins.length / trades.length : NaN,
+    ret: eq - 1, bh,
+    exp: trades.length ? trades.reduce((a, b) => a + b, 0) / trades.length : NaN, // avg return per trade
+    pf: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : NaN)   // profit factor: gross wins / gross losses
+  };
 }
 
 function analyze(cs, htfTrend = 0, market = null) { // cs = closed candles; htfTrend = higher-timeframe trend direction (1/-1/0); market = BTC context from marketContext()
@@ -603,6 +672,8 @@ function renderDetail() {
     ${planHtml}<h2 style="margin-top:14px">Why this score</h2><ul>${d.why.map(w => `<li>${w}</li>`).join("")}</ul>
     <h2 style="margin-top:14px">Backtest (${d.side === "short" ? "short" : "long"}-side, same rules)</h2>
     <div class="kv"><span>Trades</span><span>${b.trades}</span><span>Win rate</span><span>${b.trades ? (b.win * 100).toFixed(0) + "%" : "–"}</span>
+    <span title="Average % gained/lost per trade — the single best measure of whether this setup has a real edge">Expectancy / trade</span><span class="${b.exp >= 0 ? "up" : "down"}">${b.trades ? (b.exp * 100).toFixed(2) + "%" : "–"}</span>
+    <span title="Gross wins ÷ gross losses. Above 1.0 = profitable; pros look for 1.5+">Profit factor</span><span class="${b.pf >= 1 ? "up" : "down"}">${b.trades ? (isFinite(b.pf) ? b.pf.toFixed(2) : "∞") : "–"}</span>
     <span>Strategy return</span><span class="${b.ret >= 0 ? "up" : "down"}">${(b.ret * 100).toFixed(1)}%</span>
     <span>Buy &amp; hold, same period</span><span class="${b.bh >= 0 ? "up" : "down"}">${(b.bh * 100).toFixed(1)}%</span></div>
     <h2 style="margin-top:14px">Futures positioning <span class="mute hint">· squeeze/liquidation-risk proxy</span></h2>
