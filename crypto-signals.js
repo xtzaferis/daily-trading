@@ -359,13 +359,31 @@ function analyze(cs, htfTrend = 0, market = null) { // cs = closed candles; htfT
 // ---------- Binance data ----------
 const BASES = ["https://data-api.binance.vision", "https://api.binance.com"];
 const FUTURES_BASES = ["https://fapi.binance.com"];
-async function getFrom(bases, path) {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function getFrom(bases, path, retries = 2) {
   let err;
   for (const b of bases) {
-    try { const r = await fetch(b + path); if (r.ok) return await r.json(); err = new Error(r.status); }
-    catch (e) { err = e; }
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch(b + path);
+        if (r.ok) return await r.json();
+        // 429 = rate limited, 418 = IP auto-banned for ignoring 429: back off and retry same host.
+        if ((r.status === 429 || r.status === 418) && attempt < retries) { await sleep(400 * (attempt + 1)); continue; }
+        err = new Error(r.status); break;
+      } catch (e) { err = e; if (attempt < retries) await sleep(300 * (attempt + 1)); }
+    }
   }
   throw err;
+}
+
+// Run async tasks with a concurrency cap so a scan doesn't fire ~80 requests at once and get
+// rate-limited (the cause of the table intermittently coming up empty on mobile networks).
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; results[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, worker));
+  return results;
 }
 const getJSON = path => getFrom(BASES, path);
 const futuresJSON = path => getFrom(FUTURES_BASES, path);
@@ -486,13 +504,17 @@ async function load() {
     state.scanned = candidates.length;
 
     const htf = HTF_MAP[tf] || tf;
-    const [klResults, htfResults, btcKl] = await Promise.all([
-      Promise.all(candidates.map(t => fetchKlines(t.symbol, tf))),
-      Promise.all(candidates.map(t => fetchKlines(t.symbol, htf, CONFIG.htfLimit))),
-      fetchKlines("BTCUSDT", tf)
-    ]);
+    const btcP = fetchKlines("BTCUSDT", tf);
+    // Fetch each coin's two timeframes together, capped at 6 coins in flight, so we never
+    // burst ~80 requests at once (which Binance rate-limits on mobile, blanking the table).
+    const fetched = await mapLimit(candidates, 6, async t => ({
+      kl: await fetchKlines(t.symbol, tf),
+      htf: await fetchKlines(t.symbol, htf, CONFIG.htfLimit)
+    }));
+    const klResults = fetched.map(f => f.kl), htfResults = fetched.map(f => f.htf);
+    const btcKl = await btcP;
     const btcCs = btcKl ? btcKl.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1) : null;
-    state.market = marketContext(btcCs);
+    if (btcCs) state.market = marketContext(btcCs);
 
     const analyzed = [];
     candidates.forEach((t, idx) => {
@@ -515,6 +537,16 @@ async function load() {
       state.data[base] = { ...res, base };
       analyzed.push(state.data[base]);
     });
+
+    // If the network throttled most kline requests this round, analyzed comes back empty or
+    // tiny. Don't blank a table that was fine a minute ago — keep the last good view and say so.
+    if (analyzed.length < Math.min(3, candidates.length) && state.top.length) {
+      $("status").textContent = "Showing last good scan · network throttled, retrying in 60s";
+      $("refresh").disabled = false;
+      render();
+      scheduleCloseRefresh();
+      return;
+    }
 
     // Aggregate "edge check": pool the backtests of every coin currently signalling each side,
     // on this timeframe, into one profit factor. Answers the only question that matters for
