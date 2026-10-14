@@ -10,6 +10,9 @@
 <header>
   <h1>Crypto Signals · Live Scanner</h1>
   <div class="toolbar">
+    <label>Timeframe
+      <select id="tf"><option value="5m">5m</option><option value="15m">15m</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d" selected>1d</option><option value="1w">1w</option></select>
+    </label>
     <label>Direction
       <select id="dir"><option value="both" selected>Long + Short</option><option value="long">Long only</option><option value="short">Short only</option></select>
     </label>
@@ -25,7 +28,7 @@
     <span id="countdown" class="mute"></span>
     <span id="status">Loading…</span>
   </div>
-  <div class="sub">Daily trading dashboard · scans liquid Binance USDT pairs on the 1-day close and ranks the strongest long and short setups · check it any time after 00:00 UTC once the daily candle has closed</div>
+  <div class="sub">Scans liquid Binance USDT pairs on the chosen timeframe's close and ranks the strongest long and short setups · signals use closed candles only</div>
 </header>
 
 <div class="regime" id="regime"></div>
@@ -47,17 +50,9 @@
   </section>
   <div class="right">
     <section class="card">
-      <h2>Look up any coin <span class="mute hint">· any timeframe, independent of the daily ranking above</span></h2>
+      <h2>Look up any coin <span class="mute hint">· works even if it's not in the top list</span></h2>
       <div class="lookup-row">
         <input id="lookup" type="text" placeholder="e.g. PEPE, WIF, DOGE">
-        <select id="lookupTf">
-          <option value="5m">5m</option>
-          <option value="15m">15m</option>
-          <option value="1h" selected>1h</option>
-          <option value="4h">4h</option>
-          <option value="1d">1d</option>
-          <option value="1w">1w</option>
-        </select>
         <button id="lookupBtn">Check trend</button>
       </div>
     </section>
