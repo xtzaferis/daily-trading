@@ -310,7 +310,8 @@ function backtest(I, side = "long", enter = 25, fee = 0.001) {
     win: trades.length ? wins.length / trades.length : NaN,
     ret: eq - 1, bh,
     exp: trades.length ? trades.reduce((a, b) => a + b, 0) / trades.length : NaN, // avg return per trade
-    pf: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : NaN)   // profit factor: gross wins / gross losses
+    pf: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : NaN),   // profit factor: gross wins / gross losses
+    grossWin, grossLoss                                                           // exposed so many coins' backtests can be pooled into one aggregate edge
   };
 }
 
@@ -409,7 +410,7 @@ const fmt = p => p >= 1000 ? p.toLocaleString(undefined, { maximumFractionDigits
 const fmtUsd = n => n >= 1e9 ? "$" + (n / 1e9).toFixed(2) + "B" : n >= 1e6 ? "$" + (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? "$" + (n / 1e3).toFixed(1) + "K" : "$" + n.toFixed(0);
 const parsePinned = str => (str || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
 
-const state = { data: {}, tick: {}, top: [], sel: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null, lookup: null, lookupActive: false };
+const state = { data: {}, tick: {}, top: [], sel: null, prev: {}, feed: [], scanned: 0, lastUpdate: null, sentiment: {}, market: null, lookup: null, lookupActive: false, edge: null };
 const activeDetailBase = () => state.lookupActive ? state.lookup?.base : state.sel;
 
 function renderSentimentHtml(base, d) {
@@ -515,6 +516,18 @@ async function load() {
       analyzed.push(state.data[base]);
     });
 
+    // Aggregate "edge check": pool the backtests of every coin currently signalling each side,
+    // on this timeframe, into one profit factor. Answers the only question that matters for
+    // max profit — do the signals I'm about to act on actually have a historical edge here?
+    const edge = { long: { gw: 0, gl: 0, n: 0 }, short: { gw: 0, gl: 0, n: 0 } };
+    analyzed.forEach(d => {
+      if (d.side !== "long" && d.side !== "short") return;
+      const e = edge[d.side];
+      e.gw += d.bt.grossWin || 0; e.gl += d.bt.grossLoss || 0; e.n++;
+    });
+    const pf = e => e.gl > 0 ? e.gw / e.gl : (e.gw > 0 ? Infinity : NaN);
+    state.edge = { long: { pf: pf(edge.long), n: edge.long.n }, short: { pf: pf(edge.short), n: edge.short.n } };
+
     const dir = $("dir").value; // both|long|short
     const ranked = analyzed
       .filter(d => dir === "both" ? true : d.side === dir)
@@ -614,11 +627,32 @@ function renderStats() {
   const longs = state.top.filter(d => d.side === "long").length;
   const shorts = state.top.filter(d => d.side === "short").length;
   const best = state.top[0];
+  const e = state.edge;
+  // Edge tag: aggregate backtested profit factor of every coin currently signalling this side,
+  // on this timeframe. PF >= 1.5 strong edge, 1.0-1.5 thin, < 1.0 the signals have historically lost.
+  const edgeTag = sd => {
+    const s = e && e[sd];
+    if (!s || !s.n || isNaN(s.pf)) return '<span class="mute" style="font-size:11px">no signals</span>';
+    const pf = s.pf, cls = pf >= 1.5 ? "up" : pf >= 1 ? "" : "down";
+    const word = pf >= 1.5 ? "strong edge" : pf >= 1 ? "thin edge" : "no edge — skip";
+    return `<span class="${cls}" style="font-size:11px">PF ${isFinite(pf) ? pf.toFixed(2) : "∞"} · ${word}</span>`;
+  };
+  const tf = $("tf").value;
+  const dir = $("dir") ? $("dir").value : "both";
+  // Warn when the side(s) the user is actually looking at have no historical edge on this timeframe.
+  const weakLong = e && dir !== "short" && e.long.n && e.long.pf < 1;
+  const weakShort = e && dir !== "long" && e.short.n && e.short.pf < 1;
+  let note = "";
+  if (weakLong || weakShort) {
+    const which = weakLong && weakShort ? "Both long and short" : weakLong ? "Long" : "Short";
+    note = `<div style="grid-column:1/-1" class="warn">⚠ ${which} signals on the ${tf} timeframe are currently backtesting below profitable (PF &lt; 1.0). This rule set has historically shown its strongest edge on 4h (long) and 1d (short) — treat ${tf} signals with extra caution and lean on the per-coin profit factor before entering.</div>`;
+  }
   $("stats").innerHTML = `
     <div class="stat"><span class="mute">Pairs scanned</span><b>${state.scanned || 0}</b></div>
-    <div class="stat"><span class="mute">Long setups</span><b class="up">${longs}</b></div>
-    <div class="stat"><span class="mute">Short setups</span><b class="down">${shorts}</b></div>
-    <div class="stat"><span class="mute">Best opportunity</span><b>${best ? best.base + " (" + best.score.toFixed(0) + ")" : "–"}</b></div>`;
+    <div class="stat"><span class="mute">Long setups · ${tf}</span><b class="up">${longs}</b>${edgeTag("long")}</div>
+    <div class="stat"><span class="mute">Short setups · ${tf}</span><b class="down">${shorts}</b>${edgeTag("short")}</div>
+    <div class="stat"><span class="mute">Best opportunity</span><b>${best ? best.base + " (" + best.score.toFixed(0) + ")" : "–"}</b></div>
+    ${note}`;
 }
 
 function renderFeed() {
