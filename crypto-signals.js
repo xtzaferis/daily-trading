@@ -592,15 +592,15 @@ function render() {
     const flag = d.counterTrend ? '<span class="mute" title="Against the higher-timeframe trend — treat as a lower-conviction bounce, not a clean signal">⚠</span>'
       : d.htfAligned ? '<span class="up" title="Aligned with the higher-timeframe trend">✓</span>' : "";
     return `<tr data-s="${d.base}" class="${d.base === state.sel ? "sel" : ""}">
-      <td><span class="mute">${idx + 1}</span> <b>${d.base}</b></td>
-      <td>${fmt(+t.lastPrice)}</td>
-      <td class="${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</td>
-      <td>${spark(d.cs)}</td>
-      <td class="${d.rsi > 70 ? "down" : d.rsi < 30 ? "up" : ""}">${d.rsi.toFixed(0)}</td>
-      <td>${bar}${d.score.toFixed(0)}</td>
-      <td><span class="badge ${d.lab}">${labelText[d.lab]}</span> ${flag}</td>
-      <td>${sideTag}</td>
-      <td class="mute">${bt}</td>
+      <td data-label="#"><span class="rank">${idx + 1}</span> <b>${d.base}</b></td>
+      <td data-label="Price">${fmt(+t.lastPrice)}</td>
+      <td data-label="24h" class="${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</td>
+      <td data-label="Trend">${spark(d.cs)}</td>
+      <td data-label="RSI" class="${d.rsi > 70 ? "down" : d.rsi < 30 ? "up" : ""}">${d.rsi.toFixed(0)}</td>
+      <td data-label="Score">${bar}${d.score.toFixed(0)}</td>
+      <td data-label="Signal"><span class="badge ${d.lab}">${labelText[d.lab]}</span> ${flag}</td>
+      <td data-label="Side">${sideTag}</td>
+      <td data-label="Backtest" class="mute">${bt}</td>
     </tr>`;
   }).join("");
   $("rows").innerHTML = rows || `<tr><td colspan="9" class="mute">No pairs matched your filters. Lower min volume, widen the universe, or switch direction to "Both".</td></tr>`;

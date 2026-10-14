@@ -1,115 +1,188 @@
-:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c232c;--line:#2a323d;--text:#e6edf3;--mute:#8b96a3;--up:#2ea36a;--down:#e5534b;--warn:#d4a72c;--acc:#4c8dff}
+:root{
+  --bg:#0b0e13; --surface:#141a22; --surface-2:#1b2430; --line:#263040;
+  --text:#e8eef5; --mute:#8a97a6;
+  --up:#26c281; --down:#f0616d; --warn:#e0b341; --acc:#4c8dff; --acc-2:#6aa3ff;
+  --radius:14px; --radius-sm:10px;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.25);
+}
 *{box-sizing:border-box}
-/* NOTE: overflow-x:hidden on html (not just body) was tried here to stop page-level
-   horizontal zoom on iOS, but it also blocked touch-scrolling inside .table-wrap — reverted.
-   The real fix for page-level overflow is the max-width:100%/min-width:0 guards below,
-   which contain content without disabling scroll on elements that are meant to scroll. */
 html{width:100%}
-body{margin:0;width:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+body{
+  margin:0; width:100%; overflow-x:hidden;
+  background:
+    radial-gradient(1200px 600px at 100% -10%, rgba(76,141,255,.08), transparent 60%),
+    radial-gradient(900px 500px at -10% 0%, rgba(38,194,129,.06), transparent 55%),
+    var(--bg);
+  color:var(--text);
+  font:15px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent;
+  letter-spacing:-0.01em;
+}
 
-header{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
-header h1{font-size:16px;margin:0 12px 0 0;white-space:nowrap}
-header .sub{color:var(--mute);font-size:12px;flex-basis:100%;margin-top:-6px}
-.toolbar{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;flex:1}
-/* Desktop: advanced controls flow inline in the toolbar exactly as before; "More" toggle hidden. */
+/* ---------- header ---------- */
+header{
+  position:sticky; top:0; z-index:10;
+  display:flex; flex-wrap:wrap; gap:12px 16px; align-items:center;
+  padding:14px 20px; border-bottom:1px solid var(--line);
+  background:rgba(13,18,25,.82); backdrop-filter:saturate(140%) blur(12px);
+}
+header h1{
+  font-size:16px; font-weight:700; margin:0 8px 0 0; white-space:nowrap;
+  display:flex; align-items:center; gap:8px; letter-spacing:-0.02em;
+}
+header h1::before{
+  content:""; width:10px; height:10px; border-radius:50%;
+  background:var(--up); box-shadow:0 0 0 4px rgba(38,194,129,.18);
+}
+header .sub{color:var(--mute); font-size:12.5px; flex-basis:100%; margin-top:-2px; line-height:1.4}
+.toolbar{display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; flex:1}
 .adv{display:contents}
 #advToggle{display:none}
-label{color:var(--mute);font-size:12px;display:flex;align-items:center;gap:6px;white-space:nowrap}
-select,input,button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+
+label{color:var(--mute); font-size:12px; font-weight:500; display:flex; align-items:center; gap:7px; white-space:nowrap}
+select,input,button{
+  background:var(--surface-2); color:var(--text);
+  border:1px solid var(--line); border-radius:var(--radius-sm);
+  padding:8px 11px; font:inherit; font-size:14px; transition:border-color .15s, background .15s, box-shadow .15s;
+}
+select{appearance:none; -webkit-appearance:none; padding-right:28px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);
+  background-position:calc(100% - 15px) 51%, calc(100% - 10px) 51%; background-size:5px 5px,5px 5px; background-repeat:no-repeat;}
 input{width:92px}
 input#pinned{width:150px}
-button{cursor:pointer;font-weight:600}
+select:focus,input:focus{outline:none; border-color:var(--acc); box-shadow:0 0 0 3px rgba(76,141,255,.18)}
+button{cursor:pointer; font-weight:600}
 button:hover{border-color:var(--acc)}
-button:disabled{opacity:.5;cursor:default}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.5; cursor:default}
+#refresh{background:linear-gradient(180deg,var(--acc-2),var(--acc)); border-color:transparent; color:#fff; box-shadow:0 2px 8px rgba(76,141,255,.3)}
+#refresh:hover{filter:brightness(1.07)}
 .spacer{flex:1}
-#status{color:var(--mute);font-size:12px;white-space:nowrap}
+#status,#countdown{color:var(--mute); font-size:12px; white-space:nowrap}
 
-.regime{margin:12px 20px 0;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);border-left:4px solid var(--mute);font-size:13px}
-.regime.bull{border-left-color:var(--up)}
-.regime.bear{border-left-color:var(--down)}
-.regime.chop{border-left-color:var(--warn)}
+/* ---------- regime banner ---------- */
+.regime{
+  margin:14px 20px 0; padding:11px 16px; border-radius:var(--radius);
+  border:1px solid var(--line); background:var(--surface); box-shadow:var(--shadow);
+  border-left:4px solid var(--mute); font-size:13.5px;
+}
+.regime.bull{border-left-color:var(--up); background:linear-gradient(90deg,rgba(38,194,129,.08),var(--surface) 40%)}
+.regime.bear{border-left-color:var(--down); background:linear-gradient(90deg,rgba(240,97,109,.08),var(--surface) 40%)}
+.regime.chop{border-left-color:var(--warn); background:linear-gradient(90deg,rgba(224,179,65,.08),var(--surface) 40%)}
 
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;padding:12px 20px 0}
-.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
-.stat span{font-size:11px;text-transform:uppercase;letter-spacing:.04em}
-.stat b{font-size:18px}
-.stat > span:last-child{text-transform:none;letter-spacing:0}
+/* ---------- stat tiles ---------- */
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; padding:14px 20px 0}
+.stat{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+  padding:13px 16px; display:flex; flex-direction:column; gap:5px; min-width:0; box-shadow:var(--shadow);
+}
+.stat span{font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--mute)}
+.stat b{font-size:20px; font-weight:700; letter-spacing:-0.02em}
+.stat > span:last-child{text-transform:none; letter-spacing:0; font-weight:500}
 
-main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;padding:16px 20px;max-width:100%}
+/* ---------- layout ---------- */
+main{display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:16px; padding:16px 20px; max-width:100%}
 @media(max-width:1100px){main{grid-template-columns:1fr}}
+.right{display:flex; flex-direction:column; gap:16px}
 
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
-.card h2{font-size:13px;margin:0 0 10px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-.card h2 .hint{text-transform:none;letter-spacing:0;font-weight:400}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow)}
+.card h2{font-size:12px; margin:0 0 12px; color:var(--mute); font-weight:600; text-transform:uppercase; letter-spacing:.05em; display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.card h2 .hint{text-transform:none; letter-spacing:0; font-weight:400}
+.card h2 select{font-size:13px; padding:4px 26px 4px 9px; text-transform:none; letter-spacing:0; margin-left:auto}
 
-.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
-.scroll-hint{display:none;font-size:11px;text-align:center;margin-top:4px}
-/* border-collapse:separate (not collapse) because Safari fails to keep sticky table cells
-   stuck in place when the table uses border-collapse:collapse. border-spacing:0 keeps the
-   same visual tightness as collapse would have given. */
-table{width:100%;min-width:620px;border-collapse:separate;border-spacing:0}
-th{font-size:11px;color:var(--mute);text-align:right;font-weight:600;padding:6px 8px;text-transform:uppercase}
-td{padding:8px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
-/* Symbol column stays put while the rest of the table scrolls horizontally on mobile. */
-th:first-child,td:first-child{text-align:left;position:sticky;left:0;z-index:2;background:var(--panel);box-shadow:2px 0 4px -2px rgba(0,0,0,.4)}
+/* ---------- table ---------- */
+.table-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%; border-radius:var(--radius-sm)}
+.scroll-hint{display:none; font-size:11px; text-align:center; margin-top:8px; color:var(--mute)}
+table{width:100%; min-width:620px; border-collapse:separate; border-spacing:0}
+th{font-size:10.5px; color:var(--mute); text-align:right; font-weight:600; padding:8px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--line)}
+td{padding:11px 8px; text-align:right; border-top:1px solid var(--line); white-space:nowrap; font-variant-numeric:tabular-nums}
+tbody tr:first-child td{border-top:0}
+th:first-child,td:first-child{text-align:left; position:sticky; left:0; z-index:2; background:var(--surface)}
 th:first-child{z-index:3}
-tbody tr[data-s]{cursor:pointer}
-tbody tr[data-s]:hover,tbody tr.sel{background:var(--panel2)}
-tbody tr[data-s]:hover td:first-child,tbody tr.sel td:first-child{background:var(--panel2)}
+td:first-child{box-shadow:6px 0 10px -8px rgba(0,0,0,.6)}
+td:first-child b{font-weight:600}
+.rank{color:var(--mute); font-size:12px; margin-right:2px}
+tbody tr[data-s]{cursor:pointer; transition:background .12s}
+tbody tr[data-s]:hover,tbody tr.sel{background:var(--surface-2)}
+tbody tr[data-s]:hover td:first-child,tbody tr.sel td:first-child{background:var(--surface-2)}
+tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--acc), 6px 0 10px -8px rgba(0,0,0,.6)}
 
-.up{color:var(--up)}
-.down{color:var(--down)}
-.mute{color:var(--mute)}
+.up{color:var(--up)} .down{color:var(--down)} .mute{color:var(--mute)}
 
-.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
-.SB{background:#143d2a;color:#4be08f}
-.B{background:#1c3327;color:#56c789}
-.N{background:#2a2f36;color:var(--mute)}
-.S{background:#40201f;color:#f0776f}
-.SS{background:#521a18;color:#ff8a82}
+.badge{display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; letter-spacing:.01em}
+.SB{background:rgba(38,194,129,.16); color:#4be08f; box-shadow:inset 0 0 0 1px rgba(38,194,129,.3)}
+.B{background:rgba(38,194,129,.1); color:#56c789}
+.N{background:var(--surface-2); color:var(--mute)}
+.S{background:rgba(240,97,109,.12); color:#f0776f}
+.SS{background:rgba(240,97,109,.2); color:#ff8a82; box-shadow:inset 0 0 0 1px rgba(240,97,109,.3)}
 
-.bar{width:70px;height:6px;background:var(--line);border-radius:3px;position:relative;display:inline-block;vertical-align:middle;margin-right:6px}
-.bar i{position:absolute;top:0;height:100%;border-radius:3px}
-.bar::after{content:"";position:absolute;left:50%;top:-2px;width:1px;height:10px;background:var(--mute)}
+.bar{width:64px; height:6px; background:var(--line); border-radius:3px; position:relative; display:inline-block; vertical-align:middle; margin-right:8px; overflow:hidden}
+.bar i{position:absolute; top:0; height:100%; border-radius:3px}
+.bar::after{content:""; position:absolute; left:50%; top:-2px; width:1px; height:10px; background:var(--mute); opacity:.5}
 
-canvas{width:100%;max-width:100%;height:260px;display:block}
-.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;margin:10px 0}
-.kv span:nth-child(odd){color:var(--mute)}
-.kv span:nth-child(even){text-align:right;font-variant-numeric:tabular-nums;min-width:0;overflow-wrap:break-word}
-ul{margin:6px 0 0;padding-left:18px}
-li{margin:2px 0}
-.feed div{padding:5px 0;border-top:1px solid var(--line);font-size:13px}
+/* ---------- detail ---------- */
+canvas{width:100%; max-width:100%; height:260px; display:block; border-radius:var(--radius-sm)}
+.kv{display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 14px; margin:12px 0}
+.kv span:nth-child(odd){color:var(--mute); font-size:13px}
+.kv span:nth-child(even){text-align:right; font-variant-numeric:tabular-nums; min-width:0; overflow-wrap:break-word; font-weight:500}
+ul{margin:8px 0 0; padding-left:18px}
+li{margin:3px 0; font-size:13.5px}
+.feed div{padding:8px 0; border-top:1px solid var(--line); font-size:13px}
 .feed div:first-child{border-top:0}
-.warn{color:var(--warn);font-size:12px;margin-top:10px}
-.right{display:flex;flex-direction:column;gap:16px}
+.warn{color:var(--warn); font-size:12.5px; margin-top:12px; line-height:1.5; padding:10px 12px; background:rgba(224,179,65,.07); border:1px solid rgba(224,179,65,.2); border-radius:var(--radius-sm)}
 
-.lookup-row{display:flex;gap:8px}
-.lookup-row input{flex:1;width:auto}
+.lookup-row{display:flex; gap:8px}
+.lookup-row input{flex:1; width:auto}
+#lookupBtn{background:var(--surface-2); white-space:nowrap}
 
+/* ---------- mobile ---------- */
 @media(max-width:700px){
   body{font-size:15px}
-  header{position:static;padding:10px 14px}
-  header h1{font-size:15px;flex-basis:100%}
-  .toolbar{gap:10px}
-  /* Essentials (Timeframe, Direction, Refresh, More) share rows two-up so the header stays short
-     and the data table is visible straight away instead of being pushed below a tall control stack. */
+  header{padding:12px 14px; gap:10px}
+  header h1{font-size:16px; flex-basis:100%}
+  .toolbar{gap:9px}
   .toolbar > label,.toolbar > #refresh,#advToggle{flex:1 1 calc(50% - 5px)}
   .toolbar label input,.toolbar label select,.lookup-row input,input#pinned{width:100%}
-  select,input,button{font-size:16px;padding:9px 10px} /* 16px prevents iOS auto-zoom on focus */
-  #advToggle{display:block}
-  /* Advanced controls hidden by default on mobile; shown as a compact 2-col grid when toggled. */
-  .adv{display:none;flex-basis:100%;width:100%}
-  .toolbar.adv-open .adv{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
-  .adv label{display:flex;flex-direction:column;align-items:stretch;gap:4px}
+  select,input,button{font-size:16px; padding:11px} /* 16px prevents iOS auto-zoom on focus */
+  #advToggle{display:block; background:var(--surface-2)}
+  .adv{display:none; flex-basis:100%; width:100%}
+  .toolbar.adv-open .adv{display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%; padding-top:2px}
+  .adv label{display:flex; flex-direction:column; align-items:stretch; gap:5px}
   .adv #alerts{grid-column:1/-1}
   .spacer{display:none}
-  #countdown,#status{white-space:normal;flex:1 1 100%;text-align:left}
-  .regime{margin:10px 14px 0}
-  .stats{padding:10px 14px 0}
-  main{padding:10px 14px;gap:12px}
-  .card{padding:12px}
-  .lookup-row{flex-direction:column}
-  .scroll-hint{display:block}
-  th,td{padding:6px}
-  table{min-width:560px}
+  #countdown,#status{white-space:normal; flex:1 1 100%; text-align:left}
+  .regime{margin:12px 14px 0}
+  .stats{padding:12px 14px 0; grid-template-columns:1fr 1fr}
+  main{padding:12px 14px; gap:12px}
+  .card{padding:14px}
+
+  /* table -> stacked cards: no horizontal scrolling at all on mobile */
+  .table-wrap{overflow:visible}
+  .scroll-hint{display:none}
+  table{min-width:0; display:block}
+  thead{display:none}
+  tbody{display:block}
+  tr[data-s]{
+    display:grid; grid-template-columns:1fr 1fr; gap:7px 12px;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px; margin-bottom:11px; box-shadow:var(--shadow);
+  }
+  tr[data-s].sel{border-color:var(--acc); box-shadow:0 0 0 1px var(--acc), var(--shadow)}
+  tr[data-s] td{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:0; border:0; text-align:right; white-space:normal; font-size:14px;
+  }
+  tr[data-s] td::before{content:attr(data-label); color:var(--mute); font-size:11px; text-transform:uppercase; letter-spacing:.04em; font-weight:500}
+  /* symbol = full-width card title */
+  tr[data-s] td:first-child{
+    grid-column:1/-1; position:static; box-shadow:none; background:none;
+    justify-content:flex-start; gap:8px; font-size:19px; font-weight:700;
+    padding-bottom:9px; margin-bottom:3px; border-bottom:1px solid var(--line);
+  }
+  tr[data-s] td:first-child::before{display:none}
+  tr[data-s] td:first-child .rank{font-size:13px; background:var(--surface); border-radius:6px; padding:2px 7px; margin-right:2px}
+  /* spark trend keeps its natural size, pushed to the right next to its label */
+  tr[data-s] td[data-label="Trend"]::before{margin-right:auto}
+  /* empty-state cell */
+  tr:not([data-s]) td{display:block; text-align:center; padding:20px}
 }
