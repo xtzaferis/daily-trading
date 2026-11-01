@@ -672,19 +672,26 @@ function refinePositioning(result, lsRatio) {
 // Compute a final BUY/SELL/WAIT action from all criteria.
 // Only returns BUY or SELL when EVERY gate passes.
 function computeAction(d, edgeData) {
-  if (d.side === "none") return { action: "WAIT", reason: "No signal" };
-  if (d.grade === "C") return { action: "WAIT", reason: "Low confidence" };
-  if (!d.rr || isNaN(d.rr.rr) || d.rr.rr < 1.5) return { action: "WAIT", reason: "R:R < 1.5" };
-  if (d.counterTrend) return { action: "WAIT", reason: "Counter-trend" };
-  if (d.squeezeRisk) return { action: "WAIT", reason: "Squeeze risk" };
+  // Hard gates — these block the trade entirely
+  if (d.side === "none") return { action: "WAIT", reason: "No signal", cautions: [] };
+  if (d.grade === "C") return { action: "WAIT", reason: "Low confidence", cautions: [] };
+  if (!d.rr || isNaN(d.rr.rr) || d.rr.rr < 1.0) return { action: "WAIT", reason: "R:R < 1", cautions: [] };
+
+  // Soft gates — cautions shown on the signal, don't block
+  const cautions = [];
+  if (d.rr.rr < 1.5) cautions.push("Tight R:R");
+  if (d.counterTrend) cautions.push("Against HTF");
+  if (d.squeezeRisk) cautions.push("Squeeze risk");
+  if (d.marketAligned === false) cautions.push("Against BTC");
   const coinPf = d.bt && d.bt.pf;
-  if (coinPf !== undefined && isFinite(coinPf) && coinPf < 1.0) return { action: "WAIT", reason: "Backtest losing" };
+  if (coinPf !== undefined && isFinite(coinPf) && coinPf < 1.0) cautions.push("Weak backtest");
   if (edgeData) {
     const pf = edgeData[d.side === "long" ? "long" : "short"];
-    if (pf && pf.pf < 1.0) return { action: "WAIT", reason: "PF < 1.0" };
+    if (pf && isFinite(pf.pf) && pf.pf < 1.0) cautions.push("TF edge weak");
   }
-  if (d.marketAligned === false) return { action: "WAIT", reason: "Against market" };
-  return { action: d.side === "long" ? "BUY" : "SELL", reason: null };
+
+  const action = d.side === "long" ? "BUY" : "SELL";
+  return { action, reason: null, cautions };
 }
 
 function filterUniverse(all, minVol) {
@@ -759,6 +766,7 @@ async function runCoinLookup(base, tf) {
   const act = computeAction(res, state.edge);
   res.action = act.action;
   res.skipReason = act.reason;
+  res.cautions = act.cautions;
   return { ...res, base, tf };
 }
 
@@ -863,6 +871,7 @@ async function load() {
       const a = computeAction(d, state.edge);
       d.action = a.action;
       d.skipReason = a.reason;
+      d.cautions = a.cautions;
     });
 
     const dir = $("dir").value;
@@ -931,8 +940,10 @@ function render() {
     const catChip = c && c !== "major" ? `<span class="cat cat-${c}">${c === "trend" ? "trending" : c}</span>` : "";
 
     const isBuy = d.action === "BUY", isSell = d.action === "SELL";
-    const actionHtml = isBuy ? '<span class="action-badge action-buy">BUY</span>'
-      : isSell ? '<span class="action-badge action-sell">SELL</span>'
+    const cautionHtml = (isBuy || isSell) && d.cautions && d.cautions.length
+      ? `<span class="caution-tags">${d.cautions.map(c => `<span class="caution-tag">⚠ ${c}</span>`).join("")}</span>` : "";
+    const actionHtml = isBuy ? `<span class="action-badge action-buy">BUY</span>${cautionHtml}`
+      : isSell ? `<span class="action-badge action-sell">SELL</span>${cautionHtml}`
       : `<span class="action-badge action-wait">WAIT</span><span class="skip-reason">${d.skipReason || ""}</span>`;
 
     let entryHtml = "–", stopHtml = "–", targetHtml = "–", riskHtml = "–";
@@ -1037,11 +1048,15 @@ function renderDetail() {
 
   // Action banner — clear BUY/SELL or WAIT with reason
   const isBuy = d.action === "BUY", isSell = d.action === "SELL";
+  const detailCautions = (isBuy || isSell) && d.cautions && d.cautions.length
+    ? `<br><span class="caution-tags">${d.cautions.map(c => `<span class="caution-tag">⚠ ${c}</span>`).join("")}</span> <span class="mute" style="font-size:11px">Consider half position size</span>` : "";
+  const rrInfo = d.rr ? d.rr.rr.toFixed(1) + ":1" : "–";
+  const lsInfo = d.lsRatio ? ` · L/S ${d.lsRatio.longPct.toFixed(0)}/${d.lsRatio.shortPct.toFixed(0)}` : "";
   const actionBanner = isBuy
-    ? `<div class="action-banner action-banner-buy"><span class="action-badge action-buy" style="font-size:18px;padding:8px 22px">BUY</span> <b>All gates passed.</b> ${d.confluence}/8 confirmers · R:R ${d.rr ? d.rr.rr.toFixed(1) : "–"}:1${d.lsRatio ? ` · L/S ${d.lsRatio.longPct.toFixed(0)}/${d.lsRatio.shortPct.toFixed(0)}` : ""}</div>`
+    ? `<div class="action-banner action-banner-buy"><span class="action-badge action-buy" style="font-size:18px;padding:8px 22px">BUY</span> <b>${d.confluence}/8 confirmers · R:R ${rrInfo}${lsInfo}</b>${detailCautions}</div>`
     : isSell
-    ? `<div class="action-banner action-banner-sell"><span class="action-badge action-sell" style="font-size:18px;padding:8px 22px">SELL</span> <b>All gates passed.</b> ${d.confluence}/8 confirmers · R:R ${d.rr ? d.rr.rr.toFixed(1) : "–"}:1${d.lsRatio ? ` · L/S ${d.lsRatio.longPct.toFixed(0)}/${d.lsRatio.shortPct.toFixed(0)}` : ""}</div>`
-    : `<div class="action-banner action-banner-wait"><span class="action-badge action-wait" style="font-size:16px;padding:6px 16px">WAIT</span> <b>${d.skipReason || "No signal"}</b><br><span class="mute" style="font-size:12px">${d.side !== "none" ? `Signal: ${d.side.toUpperCase()} · ${d.grade}-grade · ${d.confluence}/8 · R:R ${d.rr && !isNaN(d.rr.rr) ? d.rr.rr.toFixed(1) + ":1" : "–"} — doesn't pass all gates` : "Score between −20 and +20. No directional signal."}</span></div>`;
+    ? `<div class="action-banner action-banner-sell"><span class="action-badge action-sell" style="font-size:18px;padding:8px 22px">SELL</span> <b>${d.confluence}/8 confirmers · R:R ${rrInfo}${lsInfo}</b>${detailCautions}</div>`
+    : `<div class="action-banner action-banner-wait"><span class="action-badge action-wait" style="font-size:16px;padding:6px 16px">WAIT</span> <b>${d.skipReason || "No signal"}</b><br><span class="mute" style="font-size:12px">${d.side !== "none" ? `Signal: ${d.side.toUpperCase()} · ${d.grade}-grade · ${d.confluence}/8 · R:R ${rrInfo} — blocked: ${d.skipReason}` : "Score between −20 and +20. No directional signal."}</span></div>`;
   const confHtml = actionBanner;
 
   let planHtml = '<div class="mute" style="margin-top:8px">No trade: score is between −20 and +20. Waiting is a position.</div>';
