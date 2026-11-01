@@ -431,9 +431,10 @@ function backtest(I, side = "long", enter = 25, fee = 0.001) {
   };
 }
 
-function analyze(cs, htfTrend = 0, market = null, tf = "1d") {
+function analyze(cs, htfTrend = 0, market = null, tf = "1d", funding = null) {
   const I = indicators(cs, tf), i = cs.length - 1, base = scoreAt(I, i), a = I.a[i], c = I.c[i];
   let score = base.score, why = [...base.why], counterTrend = false, aligned = false;
+  let squeezeRisk = null;
 
   if (htfTrend !== 0 && score !== 0) {
     aligned = (score > 0 && htfTrend > 0) || (score < 0 && htfTrend < 0);
@@ -457,11 +458,53 @@ function analyze(cs, htfTrend = 0, market = null, tf = "1d") {
     else { score *= 0.7; why.push(`⚠ Against the overall market trend (BTC is ${market.trend > 0 ? "bullish" : "bearish"}) — discounted`); }
   }
 
+  // --- Positioning overlay: funding rate as a crowding/squeeze proxy ---
+  // Positive funding = longs pay shorts = crowded long → risky to go long, helps shorts.
+  // Negative funding = shorts pay longs = crowded short → risky to go short (squeeze up risk).
+  // This is the free-API version of what a liquidation heatmap shows.
+  let positioningAligned = null;
+  if (funding && score !== 0) {
+    const fr = funding.funding;
+    const extreme = Math.abs(fr) > 0.0003;
+    const veryExtreme = Math.abs(fr) > 0.0008;
+    const dir = score > 0 ? 1 : -1;
+
+    if (extreme) {
+      if (fr > 0 && dir > 0) {
+        // Long signal + crowded longs = squeeze DOWN risk for your long
+        const penalty = veryExtreme ? 0.6 : 0.8;
+        score *= penalty;
+        squeezeRisk = "long";
+        positioningAligned = false;
+        why.push(`⚠ Funding +${(fr * 100).toFixed(3)}% — crowded longs, squeeze-down risk (score ×${penalty})`);
+      } else if (fr > 0 && dir < 0) {
+        // Short signal + crowded longs = positioning HELPS your short
+        score *= veryExtreme ? 1.15 : 1.08;
+        positioningAligned = true;
+        why.push(`✓ Funding +${(fr * 100).toFixed(3)}% — crowded longs fuel a move down`);
+      } else if (fr < 0 && dir < 0) {
+        // Short signal + crowded shorts = squeeze UP risk for your short
+        const penalty = veryExtreme ? 0.6 : 0.8;
+        score *= penalty;
+        squeezeRisk = "short";
+        positioningAligned = false;
+        why.push(`⚠ Funding ${(fr * 100).toFixed(3)}% — crowded shorts, squeeze-up risk (score ×${penalty})`);
+      } else if (fr < 0 && dir > 0) {
+        // Long signal + crowded shorts = positioning HELPS your long
+        score *= veryExtreme ? 1.15 : 1.08;
+        positioningAligned = true;
+        why.push(`✓ Funding ${(fr * 100).toFixed(3)}% — crowded shorts fuel a squeeze up`);
+      }
+    }
+  }
+
   score = Math.max(-100, Math.min(100, score));
 
-  // Confluence: bump if HTF aligned
+  // Confluence: 8 dimensions now (7 technical + 1 positioning)
   let confluence = base.confluence;
-  if (aligned) confluence = Math.min(7, confluence + 1);
+  if (aligned) confluence = Math.min(8, confluence + 1);
+  if (positioningAligned === true) confluence = Math.min(8, confluence + 1);
+  else if (positioningAligned === false) confluence = Math.max(0, confluence - 1);
 
   const lab = label(score);
   const side = score >= 20 ? "long" : score <= -20 ? "short" : "none";
@@ -470,22 +513,37 @@ function analyze(cs, htfTrend = 0, market = null, tf = "1d") {
     : side === "short" ? { side: "SHORT", entry: c, stop: c + stopDist, t1: c - stopDist, t2: c - 3 * a }
     : null;
 
-  // R:R from nearest S/R level
+  // R:R: check multiple S/R levels, pick the one with best R:R >= 1.5 if available
   let rr = null;
   if (plan) {
     rr = calcRR(c, plan.stop, I.levels, side);
-    if (rr.target) {
-      if (side === "long") plan.srTarget = rr.target;
-      else plan.srTarget = rr.target;
+    if (rr.target) plan.srTarget = rr.target;
+    // If nearest S/R gives poor R:R, try the next ones
+    if (isNaN(rr.rr) || rr.rr < 1.5) {
+      const farLevels = I.levels.filter(l => {
+        if (side === "long") return l.type === "R" && l.price > (rr.target || c) * 1.003;
+        return l.type === "S" && l.price < (rr.target || c) * 0.997;
+      }).sort((a, b) => side === "long" ? a.price - b.price : b.price - a.price);
+      if (farLevels.length) {
+        const alt = calcRR(c, plan.stop, [farLevels[0]], side);
+        if (!isNaN(alt.rr) && alt.rr > (rr.rr || 0)) { rr = alt; plan.srTarget = alt.target; }
+      }
+    }
+    // Final fallback: use ATR target for R:R if S/R gives nothing useful
+    if (isNaN(rr.rr) || rr.rr < 0.5) {
+      const atrRR = stopDist > 0 ? stopDist / stopDist : 1;
+      rr = { rr: atrRR, target: plan.t1 };
+      plan.srTarget = plan.t1;
     }
   }
 
-  const grade = confluence >= 5 ? "A" : confluence >= 3 ? "B" : "C";
+  const grade = confluence >= 6 ? "A" : confluence >= 4 ? "B" : "C";
   const bt = backtest(I, side === "short" ? "short" : "long");
   return {
     I, score, why, lab, side, plan, rsi: I.r[i], trend: I.e20[i] > I.e50[i] ? 1 : -1,
     adx: base.adx, counterTrend, htfAligned: aligned, marketAligned, atr: a, cs,
-    bt, confluence, grade, rr, levels: I.levels, vwap: I.vwap[i], ms: I.ms
+    bt, confluence, grade, rr, levels: I.levels, vwap: I.vwap[i], ms: I.ms,
+    squeezeRisk, positioningAligned, funding
   };
 }
 
@@ -539,6 +597,18 @@ async function fetchSentiment(symbol) {
     };
   } catch (e) { return null; }
 }
+
+// Bulk fetch ALL funding rates in one call — no per-coin overhead.
+// Returns a Map of symbol → { funding, markPrice }.
+async function fetchBulkFunding() {
+  try {
+    const data = await futuresJSON("/fapi/v1/premiumIndex");
+    const map = {};
+    for (const p of data) map[p.symbol] = { funding: +p.lastFundingRate, markPrice: +p.markPrice };
+    return map;
+  } catch (e) { return {}; }
+}
+
 function filterUniverse(all, minVol) {
   return all.filter(t => {
     if (!t.symbol.endsWith("USDT")) return false;
@@ -593,10 +663,11 @@ function renderSentimentHtml(base, d) {
 async function runCoinLookup(base, tf) {
   const sym = base + "USDT";
   const htf = HTF_MAP[tf] || tf;
-  const [kl, htfKl, btcKl] = await Promise.all([
+  const [kl, htfKl, btcKl, fundingMap] = await Promise.all([
     fetchKlines(sym, tf),
     fetchKlines(sym, htf, CONFIG.htfLimit),
-    fetchKlines("BTCUSDT", tf)
+    fetchKlines("BTCUSDT", tf),
+    fetchBulkFunding()
   ]);
   if (!kl || kl.length < 60) return { error: `"${sym}" not found on Binance, or not enough ${tf} history yet.` };
   const toCandles = raw => raw.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1);
@@ -604,7 +675,7 @@ async function runCoinLookup(base, tf) {
   if (cs.length < 55) return { error: `Not enough ${tf} history for ${sym} yet.` };
   const htfCs = htfKl ? toCandles(htfKl) : null;
   const btcCs = btcKl ? toCandles(btcKl) : null;
-  const res = analyze(cs, trendDir(htfCs), marketContext(btcCs), tf);
+  const res = analyze(cs, trendDir(htfCs), marketContext(btcCs), tf, fundingMap[sym] || null);
   return { ...res, base, tf };
 }
 
@@ -645,12 +716,13 @@ async function load() {
 
     const htf = HTF_MAP[tf] || tf;
     const btcP = fetchKlines("BTCUSDT", tf);
+    const fundingP = fetchBulkFunding();
     const fetched = await mapLimit(candidates, 6, async t => ({
       kl: await fetchKlines(t.symbol, tf),
       htf: await fetchKlines(t.symbol, htf, CONFIG.htfLimit)
     }));
     const klResults = fetched.map(f => f.kl), htfResults = fetched.map(f => f.htf);
-    const btcKl = await btcP;
+    const [btcKl, fundingMap] = await Promise.all([btcP, fundingP]);
     const btcCs = btcKl ? btcKl.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1) : null;
     if (btcCs) state.market = marketContext(btcCs);
 
@@ -663,7 +735,7 @@ async function load() {
       const htfKl = htfResults[idx];
       const htfCs = htfKl ? htfKl.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1) : null;
       const base = t.symbol.slice(0, -4);
-      const res = analyze(cs, trendDir(htfCs), state.market, tf);
+      const res = analyze(cs, trendDir(htfCs), state.market, tf, fundingMap[t.symbol] || null);
       const old = state.prev[base];
       if (old && old !== res.lab) {
         state.feed.unshift({ t: new Date(), s: base, from: old, to: res.lab });
@@ -761,13 +833,14 @@ function render() {
     const gradeClass = d.grade === "A" ? "grade-a" : d.grade === "B" ? "grade-b" : "grade-c";
     const rrText = d.rr && !isNaN(d.rr.rr) ? d.rr.rr.toFixed(1) + ":1" : "–";
     const rrClass = d.rr && d.rr.rr >= 2 ? "up" : d.rr && d.rr.rr >= 1.5 ? "" : "mute";
+    const sqWarn = d.squeezeRisk ? `<span class="squeeze-warn" title="Crowded ${d.squeezeRisk}s — squeeze risk">⚡</span>` : "";
     return `<tr data-s="${d.base}" class="${d.base === state.sel ? "sel" : ""}">
       <td data-label="#"><span class="rank">${idx + 1}</span> <b>${d.base}</b>${catChip}</td>
       <td data-label="Price">${fmt(+t.lastPrice)}</td>
       <td data-label="24h" class="${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</td>
       <td data-label="Score">${bar}${d.score.toFixed(0)}</td>
-      <td data-label="Signal"><span class="badge ${d.lab}">${labelText[d.lab]}</span> ${flag}</td>
-      <td data-label="Confidence"><span class="grade ${gradeClass}">${d.grade}</span> <span class="mute">${d.confluence}/7</span></td>
+      <td data-label="Signal"><span class="badge ${d.lab}">${labelText[d.lab]}</span> ${flag}${sqWarn}</td>
+      <td data-label="Confidence"><span class="grade ${gradeClass}">${d.grade}</span> <span class="mute">${d.confluence}/8</span></td>
       <td data-label="Side">${sideTag}</td>
       <td data-label="R:R" class="${rrClass}">${rrText}</td>
     </tr>`;
@@ -819,7 +892,7 @@ function renderStats() {
     <div class="stat"><span class="mute">Long setups · ${tf}</span><b class="up">${longs}</b>${edgeTag("long")}</div>
     <div class="stat"><span class="mute">Short setups · ${tf}</span><b class="down">${shorts}</b>${edgeTag("short")}</div>
     <div class="stat"><span class="mute">A-grade setups</span><b class="${aGrade ? "up" : "mute"}">${aGrade}</b><span class="mute" style="font-size:11px">${aGrade ? "high-confidence trades available" : "no high-confidence setups right now"}</span></div>
-    <div class="stat"><span class="mute">Best opportunity</span><b>${best ? best.base + " (" + best.score.toFixed(0) + ")" : "–"}</b>${best ? `<span class="grade grade-${best.grade.toLowerCase()}" style="font-size:12px">${best.grade}-grade · ${best.confluence}/7</span>` : ""}</div>
+    <div class="stat"><span class="mute">Best opportunity</span><b>${best ? best.base + " (" + best.score.toFixed(0) + ")" : "–"}</b>${best ? `<span class="grade grade-${best.grade.toLowerCase()}" style="font-size:12px">${best.grade}-grade · ${best.confluence}/8</span>` : ""}</div>
     ${note}`;
 }
 
@@ -852,10 +925,12 @@ function renderDetail() {
 
   // Confidence section
   const gradeClass = d.grade === "A" ? "grade-a" : d.grade === "B" ? "grade-b" : "grade-c";
+  const sqText = d.squeezeRisk ? ` ⚡ Squeeze risk: crowded ${d.squeezeRisk}s — positioning works AGAINST this trade.` : "";
+  const posText = d.positioningAligned === true ? " ✓ Positioning supports this trade." : "";
   const confAdvice = d.grade === "A" ? "High-confidence setup — multiple independent dimensions confirm. Full position size."
     : d.grade === "B" ? "Medium confidence — some dimensions confirm. Consider half position or wait for more confirmation."
     : "Low confidence — few dimensions agree. Skip this trade or use minimal size.";
-  const confHtml = `<div class="conf-banner conf-${d.grade.toLowerCase()}"><span class="grade ${gradeClass}" style="font-size:18px">${d.grade}</span> <b>${gradeText[d.grade]} Confidence</b> · ${d.confluence}/7 confirmers<br><span class="mute" style="font-size:12px">${confAdvice}</span></div>`;
+  const confHtml = `<div class="conf-banner conf-${d.grade.toLowerCase()}"><span class="grade ${gradeClass}" style="font-size:18px">${d.grade}</span> <b>${gradeText[d.grade]} Confidence</b> · ${d.confluence}/8 confirmers${sqText}${posText}<br><span class="mute" style="font-size:12px">${confAdvice}</span></div>`;
 
   let planHtml = '<div class="mute" style="margin-top:8px">No trade: score is between −20 and +20. Waiting is a position.</div>';
   if (d.plan) {
