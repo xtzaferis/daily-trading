@@ -574,6 +574,9 @@ async function sendTelegram(text) {
 const fs = require("fs");
 const path = require("path");
 const STATE_FILE = path.join(__dirname, "daily-state.json");
+const LOG_FILE = path.join(__dirname, "signal-log.json");
+
+const TF_EXPIRY = { "5m": 6, "15m": 12, "1h": 24, "4h": 72, "1d": 168, "1w": 336 };
 
 function formatSignal(d, tf, idx) {
   const emoji = d.action === "BUY" ? "\u{1F7E2}" : "\u{1F534}";
@@ -616,6 +619,140 @@ function saveDailyState(signals) {
     ts: Date.now(),
     signals: signals.map(signalSnapshot)
   }));
+}
+
+// ---------- signal log: track every signal and its outcome ----------
+function loadLog() {
+  try { return JSON.parse(fs.readFileSync(LOG_FILE, "utf8")); }
+  catch { return { signals: [] }; }
+}
+function saveLog(log) { fs.writeFileSync(LOG_FILE, JSON.stringify(log, null, 2)); }
+
+function logSignal(d, tf) {
+  const log = loadLog();
+  const key = `${d.base}-${tf}-${d.action}`;
+  const hasOpen = log.signals.some(s => s.key === key && s.status === "open");
+  if (hasOpen) return;
+  log.signals.push({
+    key, base: d.base, action: d.action, side: d.side, tf,
+    grade: d.grade, confluence: d.confluence, rr: d.rr?.rr,
+    entry: d.plan.entry, stop: d.plan.stop,
+    target: d.plan.srTarget || d.plan.t1,
+    cautions: d.cautions || [],
+    timestamp: new Date().toISOString(),
+    status: "open", exitPrice: null, exitTime: null, pnlPct: null
+  });
+  saveLog(log);
+}
+
+async function checkOutcomes() {
+  const log = loadLog();
+  const open = log.signals.filter(s => s.status === "open");
+  if (!open.length) return [];
+
+  const results = [];
+  for (const sig of open) {
+    const expiryHours = TF_EXPIRY[sig.tf] || 168;
+    const age = (Date.now() - new Date(sig.timestamp).getTime()) / 3600000;
+
+    const kl = await fetchKlines(sig.base + "USDT", "1h", Math.min(Math.ceil(age) + 1, 500));
+    if (!kl || !kl.length) continue;
+
+    const since = new Date(sig.timestamp).getTime();
+    const candles = kl.filter(k => k[0] >= since);
+
+    let hit = null;
+    for (const k of candles) {
+      const high = +k[2], low = +k[3];
+      if (sig.side === "long") {
+        if (low <= sig.stop) { hit = { status: "loss", price: sig.stop }; break; }
+        if (high >= sig.target) { hit = { status: "win", price: sig.target }; break; }
+      } else {
+        if (high >= sig.stop) { hit = { status: "loss", price: sig.stop }; break; }
+        if (low <= sig.target) { hit = { status: "win", price: sig.target }; break; }
+      }
+    }
+
+    if (!hit && age >= expiryHours) {
+      const lastPrice = +kl[kl.length - 1][4];
+      const pnl = sig.side === "long" ? (lastPrice - sig.entry) / sig.entry : (sig.entry - lastPrice) / sig.entry;
+      hit = { status: pnl > 0 ? "win" : "loss", price: lastPrice };
+    }
+
+    if (hit) {
+      sig.status = hit.status;
+      sig.exitPrice = hit.price;
+      sig.exitTime = new Date().toISOString();
+      sig.pnlPct = sig.side === "long"
+        ? (hit.price - sig.entry) / sig.entry * 100
+        : (sig.entry - hit.price) / sig.entry * 100;
+      results.push(sig);
+    }
+  }
+
+  if (results.length) saveLog(log);
+  return results;
+}
+
+function formatOutcome(sig) {
+  const isWin = sig.status === "win";
+  const emoji = isWin ? "✅" : "❌";
+  const label = isWin ? "WIN" : "LOSS";
+  const pnl = sig.pnlPct >= 0 ? `+${sig.pnlPct.toFixed(2)}%` : `${sig.pnlPct.toFixed(2)}%`;
+  return `${emoji} <b>${label}: ${sig.action} ${sig.base}</b> (${sig.tf})\nEntry: <code>${fmt(sig.entry)}</code> → Exit: <code>${fmt(sig.exitPrice)}</code>\nP&amp;L: <b>${pnl}</b>`;
+}
+
+function buildScorecard() {
+  const log = loadLog();
+  const now = Date.now();
+  const weekAgo = now - 7 * 86400000;
+  const closed = log.signals.filter(s => s.status !== "open" && s.exitTime && new Date(s.exitTime).getTime() >= weekAgo);
+  const allClosed = log.signals.filter(s => s.status !== "open");
+  const openCount = log.signals.filter(s => s.status === "open").length;
+
+  if (allClosed.length === 0) return null;
+
+  const weekWins = closed.filter(s => s.status === "win");
+  const weekLosses = closed.filter(s => s.status === "loss");
+  const weekWinRate = closed.length ? (weekWins.length / closed.length * 100).toFixed(1) : "0";
+  const weekPnl = closed.reduce((sum, s) => sum + (s.pnlPct || 0), 0);
+  const avgPnl = closed.length ? (weekPnl / closed.length).toFixed(2) : "0";
+
+  const allWins = allClosed.filter(s => s.status === "win");
+  const allWinRate = allClosed.length ? (allWins.length / allClosed.length * 100).toFixed(1) : "0";
+  const totalPnl = allClosed.reduce((sum, s) => sum + (s.pnlPct || 0), 0);
+  const grossWin = allClosed.filter(s => s.pnlPct > 0).reduce((s, x) => s + x.pnlPct, 0);
+  const grossLoss = Math.abs(allClosed.filter(s => s.pnlPct < 0).reduce((s, x) => s + x.pnlPct, 0));
+  const pf = grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : grossWin > 0 ? "∞" : "N/A";
+
+  const bestTrade = allClosed.length ? allClosed.reduce((a, b) => (a.pnlPct || 0) > (b.pnlPct || 0) ? a : b) : null;
+  const worstTrade = allClosed.length ? allClosed.reduce((a, b) => (a.pnlPct || 0) < (b.pnlPct || 0) ? a : b) : null;
+
+  let streak = 0, streakType = null;
+  for (let i = allClosed.length - 1; i >= 0; i--) {
+    const s = allClosed[i].status;
+    if (streakType === null) { streakType = s; streak = 1; }
+    else if (s === streakType) streak++;
+    else break;
+  }
+
+  return `\u{1F4CA} <b>Weekly Scorecard</b>
+
+<b>─── This Week ───</b>
+Signals: ${closed.length}  |  ✅ ${weekWins.length}  |  ❌ ${weekLosses.length}
+Win rate: <b>${weekWinRate}%</b>
+Week P&amp;L: <b>${weekPnl >= 0 ? "+" : ""}${weekPnl.toFixed(2)}%</b>  (avg ${avgPnl}%/trade)
+
+<b>─── All Time ───</b>
+Total: ${allClosed.length} closed  |  ${openCount} open
+Win rate: <b>${allWinRate}%</b>
+Total P&amp;L: <b>${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}%</b>
+Profit factor: <b>${pf}</b>
+${bestTrade ? `Best: ${bestTrade.action} ${bestTrade.base} +${(bestTrade.pnlPct || 0).toFixed(2)}%` : ""}
+${worstTrade ? `Worst: ${worstTrade.action} ${worstTrade.base} ${(worstTrade.pnlPct || 0).toFixed(2)}%` : ""}
+Streak: ${streak} ${streakType === "win" ? "✅" : "❌"} in a row
+
+<i>Verified by bot. Not financial advice.</i>`;
 }
 
 // ---------- core scan (shared by both modes) ----------
@@ -717,8 +854,17 @@ async function runDaily() {
 
   await sendTelegram(`\u{1F4CB} <i>Updates to these signals will be sent during the day.\nFull dashboard:</i> https://xtzaferis.github.io/daily-trading/\n\n<i>Not financial advice. DYOR.</i>`);
 
+  // Log signals for outcome tracking
+  for (const d of actionable) logSignal(d, "1d");
+
   saveDailyState(actionable);
   console.log(`Sent ${actionable.length} daily signals, state saved.`);
+
+  // Monday morning: include weekly scorecard
+  if (new Date().getUTCDay() === 1) {
+    const card = buildScorecard();
+    if (card) { await sleep(500); await sendTelegram(card); console.log("Sent weekly scorecard."); }
+  }
 }
 
 // ---------- HOURLY MODE: clean signals + daily updates ----------
@@ -735,9 +881,19 @@ async function runHourly() {
 
   for (const sig of clean) {
     await sendTelegram(formatSignal(sig, sig.tf));
+    logSignal(sig, sig.tf);
     await sleep(500);
   }
   if (clean.length) console.log(`Sent ${clean.length} clean signal(s)`);
+
+  // Check outcomes for all open signals
+  console.log("Checking open signal outcomes...");
+  const outcomes = await checkOutcomes();
+  for (const sig of outcomes) {
+    await sendTelegram(formatOutcome(sig));
+    await sleep(500);
+  }
+  if (outcomes.length) console.log(`${outcomes.length} signal(s) closed`);
 
   // 2) Check for updates to the morning's daily signals
   const state = loadDailyState();

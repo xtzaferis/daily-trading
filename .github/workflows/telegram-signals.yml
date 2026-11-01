@@ -20,12 +20,14 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Restore daily state
+      - name: Restore bot state
         uses: actions/cache@v4
         with:
-          path: bot/daily-state.json
-          key: daily-signals-${{ github.run_id }}
-          restore-keys: daily-signals-
+          path: |
+            bot/daily-state.json
+            bot/signal-log.json
+          key: bot-state-${{ github.run_id }}
+          restore-keys: bot-state-
 
       - name: Run signal scanner
         env:
