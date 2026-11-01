@@ -1,0 +1,29 @@
+name: Telegram Signals
+
+on:
+  schedule:
+    # Run at the top of every hour (catches 1h candle closes)
+    - cron: '2 * * * *'
+  workflow_dispatch:
+    inputs:
+      timeframes:
+        description: 'Timeframes to scan (comma-separated)'
+        default: '1h,4h,1d'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run signal scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TIMEFRAMES: ${{ github.event.inputs.timeframes || '1h,4h,1d' }}
+        run: node bot/telegram-bot.js
+        timeout-minutes: 5
