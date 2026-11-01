@@ -677,6 +677,8 @@ function computeAction(d, edgeData) {
   if (!d.rr || isNaN(d.rr.rr) || d.rr.rr < 1.5) return { action: "WAIT", reason: "R:R < 1.5" };
   if (d.counterTrend) return { action: "WAIT", reason: "Counter-trend" };
   if (d.squeezeRisk) return { action: "WAIT", reason: "Squeeze risk" };
+  const coinPf = d.bt && d.bt.pf;
+  if (coinPf !== undefined && isFinite(coinPf) && coinPf < 1.0) return { action: "WAIT", reason: "Backtest losing" };
   if (edgeData) {
     const pf = edgeData[d.side === "long" ? "long" : "short"];
     if (pf && pf.pf < 1.0) return { action: "WAIT", reason: "PF < 1.0" };
