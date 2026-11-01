@@ -465,8 +465,8 @@ function analyze(cs, htfTrend = 0, market = null, tf = "1d", funding = null) {
   let positioningAligned = null;
   if (funding && score !== 0) {
     const fr = funding.funding;
-    const extreme = Math.abs(fr) > 0.0003;
-    const veryExtreme = Math.abs(fr) > 0.0008;
+    const extreme = Math.abs(fr) > 0.0002;
+    const veryExtreme = Math.abs(fr) > 0.0006;
     const dir = score > 0 ? 1 : -1;
 
     if (extreme) {
@@ -609,6 +609,66 @@ async function fetchBulkFunding() {
   } catch (e) { return {}; }
 }
 
+// Per-symbol long/short account ratio — no bulk endpoint, so only fetched for top coins.
+async function fetchLongShortRatio(symbol) {
+  try {
+    const data = await futuresJSON(`/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=5m&limit=1`);
+    const row = Array.isArray(data) && data[0];
+    return row ? { longPct: +row.longAccount * 100, shortPct: +row.shortAccount * 100 } : null;
+  } catch (e) { return null; }
+}
+
+// Refine positioning using L/S account ratio as a second check on funding.
+// Funding rate alone can't detect when BOTH sides are heavily leveraged.
+function refinePositioning(result, lsRatio) {
+  if (!lsRatio || result.side === "none") return;
+  result.lsRatio = lsRatio;
+
+  const { longPct, shortPct } = lsRatio;
+  const dir = result.side === "long" ? 1 : -1;
+
+  const crowdedLongs = longPct > 56;
+  const crowdedShorts = shortPct > 56;
+  const balanced = !crowdedLongs && !crowdedShorts;
+
+  if (result.positioningAligned === true && balanced) {
+    result.positioningAligned = null;
+    result.confluence = Math.max(0, result.confluence - 1);
+    result.squeezeRisk = result.side;
+    result.score = Math.max(-100, Math.min(100, result.score * 0.82));
+    result.why.push(`⚠ L/S ${longPct.toFixed(0)}%L / ${shortPct.toFixed(0)}%S — both sides positioned, squeeze risk`);
+  } else if (result.positioningAligned === true) {
+    if ((dir < 0 && crowdedShorts) || (dir > 0 && crowdedLongs)) {
+      result.positioningAligned = false;
+      result.confluence = Math.max(0, result.confluence - 2);
+      result.squeezeRisk = result.side;
+      result.score = Math.max(-100, Math.min(100, result.score * 0.65));
+      result.why.push(`⚠ ${dir > 0 ? longPct.toFixed(0) + "% long" : shortPct.toFixed(0) + "% short"} accounts — L/S contradicts funding, high squeeze risk`);
+    }
+  }
+
+  if (result.positioningAligned === null && !balanced) {
+    if ((dir > 0 && crowdedLongs) || (dir < 0 && crowdedShorts)) {
+      result.positioningAligned = false;
+      result.confluence = Math.max(0, result.confluence - 1);
+      result.squeezeRisk = result.side;
+      result.score = Math.max(-100, Math.min(100, result.score * 0.8));
+      result.why.push(`⚠ ${dir > 0 ? longPct.toFixed(0) + "% long" : shortPct.toFixed(0) + "% short"} accounts — crowded on your side`);
+    } else if ((dir > 0 && crowdedShorts) || (dir < 0 && crowdedLongs)) {
+      result.positioningAligned = true;
+      result.confluence = Math.min(8, result.confluence + 1);
+      result.score = Math.max(-100, Math.min(100, result.score * 1.05));
+      result.why.push(`✓ L/S ${longPct.toFixed(0)}%L / ${shortPct.toFixed(0)}%S — opposing side crowded`);
+    }
+  }
+
+  if (result.squeezeRisk) {
+    result.grade = result.confluence >= 4 ? "B" : "C";
+  } else {
+    result.grade = result.confluence >= 6 ? "A" : result.confluence >= 4 ? "B" : "C";
+  }
+}
+
 function filterUniverse(all, minVol) {
   return all.filter(t => {
     if (!t.symbol.endsWith("USDT")) return false;
@@ -663,11 +723,12 @@ function renderSentimentHtml(base, d) {
 async function runCoinLookup(base, tf) {
   const sym = base + "USDT";
   const htf = HTF_MAP[tf] || tf;
-  const [kl, htfKl, btcKl, fundingMap] = await Promise.all([
+  const [kl, htfKl, btcKl, fundingMap, lsRatio] = await Promise.all([
     fetchKlines(sym, tf),
     fetchKlines(sym, htf, CONFIG.htfLimit),
     fetchKlines("BTCUSDT", tf),
-    fetchBulkFunding()
+    fetchBulkFunding(),
+    fetchLongShortRatio(sym)
   ]);
   if (!kl || kl.length < 60) return { error: `"${sym}" not found on Binance, or not enough ${tf} history yet.` };
   const toCandles = raw => raw.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1);
@@ -676,6 +737,7 @@ async function runCoinLookup(base, tf) {
   const htfCs = htfKl ? toCandles(htfKl) : null;
   const btcCs = btcKl ? toCandles(btcKl) : null;
   const res = analyze(cs, trendDir(htfCs), marketContext(btcCs), tf, fundingMap[sym] || null);
+  refinePositioning(res, lsRatio);
   return { ...res, base, tf };
 }
 
@@ -754,6 +816,17 @@ async function load() {
       render();
       scheduleCloseRefresh();
       return;
+    }
+
+    // Second pass: fetch L/S account ratio for coins with signals to refine positioning
+    const signaled = analyzed.filter(d => d.side !== "none");
+    if (signaled.length) {
+      const lsResults = await mapLimit(signaled, 4, async d => ({
+        base: d.base, ratio: await fetchLongShortRatio(d.base + "USDT")
+      }));
+      lsResults.forEach(({ base, ratio }) => {
+        if (ratio && state.data[base]) refinePositioning(state.data[base], ratio);
+      });
     }
 
     const edge = { long: { gw: 0, gl: 0, n: 0 }, short: { gw: 0, gl: 0, n: 0 } };
@@ -925,8 +998,9 @@ function renderDetail() {
 
   // Confidence section
   const gradeClass = d.grade === "A" ? "grade-a" : d.grade === "B" ? "grade-b" : "grade-c";
-  const sqText = d.squeezeRisk ? ` ⚡ Squeeze risk: crowded ${d.squeezeRisk}s — positioning works AGAINST this trade.` : "";
-  const posText = d.positioningAligned === true ? " ✓ Positioning supports this trade." : "";
+  const lsText = d.lsRatio ? ` L/S: ${d.lsRatio.longPct.toFixed(0)}%L/${d.lsRatio.shortPct.toFixed(0)}%S.` : "";
+  const sqText = d.squeezeRisk ? ` ⚡ Squeeze risk: crowded ${d.squeezeRisk}s — positioning works AGAINST this trade.${lsText}` : "";
+  const posText = d.positioningAligned === true ? ` ✓ Positioning supports this trade.${lsText}` : (lsText && !d.squeezeRisk ? lsText : "");
   const confAdvice = d.grade === "A" ? "High-confidence setup — multiple independent dimensions confirm. Full position size."
     : d.grade === "B" ? "Medium confidence — some dimensions confirm. Consider half position or wait for more confirmation."
     : "Low confidence — few dimensions agree. Skip this trade or use minimal size.";
