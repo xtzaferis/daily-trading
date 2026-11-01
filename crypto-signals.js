@@ -669,6 +669,22 @@ function refinePositioning(result, lsRatio) {
   }
 }
 
+// Compute a final BUY/SELL/WAIT action from all criteria.
+// Only returns BUY or SELL when EVERY gate passes.
+function computeAction(d, edgeData) {
+  if (d.side === "none") return { action: "WAIT", reason: "No signal" };
+  if (d.grade === "C") return { action: "WAIT", reason: "Low confidence" };
+  if (!d.rr || isNaN(d.rr.rr) || d.rr.rr < 1.5) return { action: "WAIT", reason: "R:R < 1.5" };
+  if (d.counterTrend) return { action: "WAIT", reason: "Counter-trend" };
+  if (d.squeezeRisk) return { action: "WAIT", reason: "Squeeze risk" };
+  if (edgeData) {
+    const pf = edgeData[d.side === "long" ? "long" : "short"];
+    if (pf && pf.pf < 1.0) return { action: "WAIT", reason: "PF < 1.0" };
+  }
+  if (d.marketAligned === false) return { action: "WAIT", reason: "Against market" };
+  return { action: d.side === "long" ? "BUY" : "SELL", reason: null };
+}
+
 function filterUniverse(all, minVol) {
   return all.filter(t => {
     if (!t.symbol.endsWith("USDT")) return false;
@@ -738,6 +754,9 @@ async function runCoinLookup(base, tf) {
   const btcCs = btcKl ? toCandles(btcKl) : null;
   const res = analyze(cs, trendDir(htfCs), marketContext(btcCs), tf, fundingMap[sym] || null);
   refinePositioning(res, lsRatio);
+  const act = computeAction(res, state.edge);
+  res.action = act.action;
+  res.skipReason = act.reason;
   return { ...res, base, tf };
 }
 
@@ -838,11 +857,19 @@ async function load() {
     const pf = e => e.gl > 0 ? e.gw / e.gl : (e.gw > 0 ? Infinity : NaN);
     state.edge = { long: { pf: pf(edge.long), n: edge.long.n }, short: { pf: pf(edge.short), n: edge.short.n } };
 
+    analyzed.forEach(d => {
+      const a = computeAction(d, state.edge);
+      d.action = a.action;
+      d.skipReason = a.reason;
+    });
+
     const dir = $("dir").value;
     const ranked = analyzed
       .filter(d => dir === "both" ? true : d.side === dir)
       .sort((a, b) => {
-        // Sort by: grade first (A > B > C), then by absolute score
+        const aAct = a.action !== "WAIT" ? 0 : 1;
+        const bAct = b.action !== "WAIT" ? 0 : 1;
+        if (aAct !== bAct) return aAct - bAct;
         const gOrder = { A: 0, B: 1, C: 2 };
         const gDiff = (gOrder[a.grade] || 2) - (gOrder[b.grade] || 2);
         if (gDiff !== 0) return gDiff;
@@ -895,30 +922,39 @@ function spark(cs) {
 function render() {
   renderRegime();
   renderStats();
+  const acct = +$("acct").value || 0, riskPct = (+$("risk").value || 0) / 100;
   const rows = state.top.map((d, idx) => {
-    const t = state.tick[d.base], ch = +t.priceChangePercent, w = Math.min(50, Math.abs(d.score) / 2);
-    const bar = `<span class="bar"><i style="${d.score >= 0 ? `left:50%;width:${w}%;background:var(--up)` : `right:50%;width:${w}%;background:var(--down)`}"></i></span>`;
-    const sideTag = d.side === "long" ? '<b class="up">LONG</b>' : d.side === "short" ? '<b class="down">SHORT</b>' : '<span class="mute">WAIT</span>';
-    const flag = d.counterTrend ? '<span class="mute" title="Against the higher-timeframe trend">⚠</span>'
-      : d.htfAligned ? '<span class="up" title="Aligned with HTF trend">✓</span>' : "";
+    const t = state.tick[d.base];
     const c = state.cat[d.base + "USDT"];
     const catChip = c && c !== "major" ? `<span class="cat cat-${c}">${c === "trend" ? "trending" : c}</span>` : "";
-    const gradeClass = d.grade === "A" ? "grade-a" : d.grade === "B" ? "grade-b" : "grade-c";
-    const rrText = d.rr && !isNaN(d.rr.rr) ? d.rr.rr.toFixed(1) + ":1" : "–";
-    const rrClass = d.rr && d.rr.rr >= 2 ? "up" : d.rr && d.rr.rr >= 1.5 ? "" : "mute";
-    const sqWarn = d.squeezeRisk ? `<span class="squeeze-warn" title="Crowded ${d.squeezeRisk}s — squeeze risk">⚡</span>` : "";
-    return `<tr data-s="${d.base}" class="${d.base === state.sel ? "sel" : ""}">
-      <td data-label="#"><span class="rank">${idx + 1}</span> <b>${d.base}</b>${catChip}</td>
+
+    const isBuy = d.action === "BUY", isSell = d.action === "SELL";
+    const actionHtml = isBuy ? '<span class="action-badge action-buy">BUY</span>'
+      : isSell ? '<span class="action-badge action-sell">SELL</span>'
+      : `<span class="action-badge action-wait">WAIT</span><span class="skip-reason">${d.skipReason || ""}</span>`;
+
+    let entryHtml = "–", stopHtml = "–", targetHtml = "–", riskHtml = "–";
+    if (d.plan && (isBuy || isSell)) {
+      entryHtml = fmt(d.plan.entry);
+      stopHtml = `<span class="down">${fmt(d.plan.stop)}</span>`;
+      const tgt = d.plan.srTarget || d.plan.t1;
+      targetHtml = `<span class="up">${fmt(tgt)}</span>`;
+      const dist = Math.abs(d.plan.entry - d.plan.stop);
+      const riskUsd = acct * riskPct;
+      riskHtml = `${riskUsd.toFixed(0)}$`;
+    }
+
+    return `<tr data-s="${d.base}" class="${d.base === state.sel ? "sel" : ""}${isBuy || isSell ? " actionable" : ""}">
+      <td data-label="Asset"><span class="rank">${idx + 1}</span> <b>${d.base}</b>${catChip}</td>
       <td data-label="Price">${fmt(+t.lastPrice)}</td>
-      <td data-label="24h" class="${ch >= 0 ? "up" : "down"}">${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%</td>
-      <td data-label="Score">${bar}${d.score.toFixed(0)}</td>
-      <td data-label="Signal"><span class="badge ${d.lab}">${labelText[d.lab]}</span> ${flag}${sqWarn}</td>
-      <td data-label="Confidence"><span class="grade ${gradeClass}">${d.grade}</span> <span class="mute">${d.confluence}/8</span></td>
-      <td data-label="Side">${sideTag}</td>
-      <td data-label="R:R" class="${rrClass}">${rrText}</td>
+      <td data-label="Action">${actionHtml}</td>
+      <td data-label="Entry">${entryHtml}</td>
+      <td data-label="Stop">${stopHtml}</td>
+      <td data-label="Target">${targetHtml}</td>
+      <td data-label="Risk">${riskHtml}</td>
     </tr>`;
   }).join("");
-  $("rows").innerHTML = rows || `<tr><td colspan="8" class="mute">No pairs matched your filters. Lower min volume, widen the universe, or switch direction to "Both".</td></tr>`;
+  $("rows").innerHTML = rows || `<tr><td colspan="7" class="mute">No pairs matched your filters. Lower min volume, widen the universe, or switch direction to "Both".</td></tr>`;
   document.querySelectorAll("#rows tr[data-s]").forEach(tr => tr.onclick = () => selectSymbol(tr.dataset.s, $("tf").value));
   renderDetail();
   renderFeed();
@@ -941,8 +977,9 @@ function renderRegime() {
 function renderStats() {
   const longs = state.top.filter(d => d.side === "long").length;
   const shorts = state.top.filter(d => d.side === "short").length;
-  const best = state.top[0];
-  const aGrade = state.top.filter(d => d.grade === "A").length;
+  const actionable = state.top.filter(d => d.action === "BUY" || d.action === "SELL");
+  const actionCount = actionable.length;
+  const best = actionable[0] || state.top[0];
   const e = state.edge;
   const edgeTag = sd => {
     const s = e && e[sd];
@@ -964,8 +1001,8 @@ function renderStats() {
     <div class="stat"><span class="mute">Pairs scanned</span><b>${state.scanned || 0}</b></div>
     <div class="stat"><span class="mute">Long setups · ${tf}</span><b class="up">${longs}</b>${edgeTag("long")}</div>
     <div class="stat"><span class="mute">Short setups · ${tf}</span><b class="down">${shorts}</b>${edgeTag("short")}</div>
-    <div class="stat"><span class="mute">A-grade setups</span><b class="${aGrade ? "up" : "mute"}">${aGrade}</b><span class="mute" style="font-size:11px">${aGrade ? "high-confidence trades available" : "no high-confidence setups right now"}</span></div>
-    <div class="stat"><span class="mute">Best opportunity</span><b>${best ? best.base + " (" + best.score.toFixed(0) + ")" : "–"}</b>${best ? `<span class="grade grade-${best.grade.toLowerCase()}" style="font-size:12px">${best.grade}-grade · ${best.confluence}/8</span>` : ""}</div>
+    <div class="stat"><span class="mute">Actionable trades</span><b class="${actionCount ? "up" : "mute"}">${actionCount}</b><span class="mute" style="font-size:11px">${actionCount ? "all gates passed — ready to trade" : "no trades pass all gates right now"}</span></div>
+    <div class="stat"><span class="mute">Best opportunity</span><b>${best ? best.base + " " + best.action : "–"}</b>${best ? `<span class="grade grade-${best.grade.toLowerCase()}" style="font-size:12px">${best.grade}-grade · ${best.confluence}/8</span>` : ""}</div>
     ${note}`;
 }
 
@@ -996,15 +1033,14 @@ function renderDetail() {
   if (!d) { $("detail").innerHTML = '<h2>Detail</h2><div class="mute">No opportunity selected. Adjust filters, look up a coin, or wait for the next scan.</div>'; return; }
   const acct = +$("acct").value || 0, risk = (+$("risk").value || 0) / 100;
 
-  // Confidence section
-  const gradeClass = d.grade === "A" ? "grade-a" : d.grade === "B" ? "grade-b" : "grade-c";
-  const lsText = d.lsRatio ? ` L/S: ${d.lsRatio.longPct.toFixed(0)}%L/${d.lsRatio.shortPct.toFixed(0)}%S.` : "";
-  const sqText = d.squeezeRisk ? ` ⚡ Squeeze risk: crowded ${d.squeezeRisk}s — positioning works AGAINST this trade.${lsText}` : "";
-  const posText = d.positioningAligned === true ? ` ✓ Positioning supports this trade.${lsText}` : (lsText && !d.squeezeRisk ? lsText : "");
-  const confAdvice = d.grade === "A" ? "High-confidence setup — multiple independent dimensions confirm. Full position size."
-    : d.grade === "B" ? "Medium confidence — some dimensions confirm. Consider half position or wait for more confirmation."
-    : "Low confidence — few dimensions agree. Skip this trade or use minimal size.";
-  const confHtml = `<div class="conf-banner conf-${d.grade.toLowerCase()}"><span class="grade ${gradeClass}" style="font-size:18px">${d.grade}</span> <b>${gradeText[d.grade]} Confidence</b> · ${d.confluence}/8 confirmers${sqText}${posText}<br><span class="mute" style="font-size:12px">${confAdvice}</span></div>`;
+  // Action banner — clear BUY/SELL or WAIT with reason
+  const isBuy = d.action === "BUY", isSell = d.action === "SELL";
+  const actionBanner = isBuy
+    ? `<div class="action-banner action-banner-buy"><span class="action-badge action-buy" style="font-size:18px;padding:8px 22px">BUY</span> <b>All gates passed.</b> ${d.confluence}/8 confirmers · R:R ${d.rr ? d.rr.rr.toFixed(1) : "–"}:1${d.lsRatio ? ` · L/S ${d.lsRatio.longPct.toFixed(0)}/${d.lsRatio.shortPct.toFixed(0)}` : ""}</div>`
+    : isSell
+    ? `<div class="action-banner action-banner-sell"><span class="action-badge action-sell" style="font-size:18px;padding:8px 22px">SELL</span> <b>All gates passed.</b> ${d.confluence}/8 confirmers · R:R ${d.rr ? d.rr.rr.toFixed(1) : "–"}:1${d.lsRatio ? ` · L/S ${d.lsRatio.longPct.toFixed(0)}/${d.lsRatio.shortPct.toFixed(0)}` : ""}</div>`
+    : `<div class="action-banner action-banner-wait"><span class="action-badge action-wait" style="font-size:16px;padding:6px 16px">WAIT</span> <b>${d.skipReason || "No signal"}</b><br><span class="mute" style="font-size:12px">${d.side !== "none" ? `Signal: ${d.side.toUpperCase()} · ${d.grade}-grade · ${d.confluence}/8 · R:R ${d.rr && !isNaN(d.rr.rr) ? d.rr.rr.toFixed(1) + ":1" : "–"} — doesn't pass all gates` : "Score between −20 and +20. No directional signal."}</span></div>`;
+  const confHtml = actionBanner;
 
   let planHtml = '<div class="mute" style="margin-top:8px">No trade: score is between −20 and +20. Waiting is a position.</div>';
   if (d.plan) {
