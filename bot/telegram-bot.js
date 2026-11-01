@@ -571,7 +571,11 @@ async function sendTelegram(text) {
   return res.ok;
 }
 
-function formatSignal(d, tf) {
+const fs = require("fs");
+const path = require("path");
+const STATE_FILE = path.join(__dirname, "daily-state.json");
+
+function formatSignal(d, tf, idx) {
   const emoji = d.action === "BUY" ? "\u{1F7E2}" : "\u{1F534}";
   const cautionText = d.cautions && d.cautions.length
     ? "\n⚠️ Cautions: " + d.cautions.join(", ")
@@ -579,30 +583,50 @@ function formatSignal(d, tf) {
   const rrText = d.rr ? d.rr.rr.toFixed(1) + ":1" : "N/A";
   const target = d.plan.srTarget || d.plan.t1;
   const riskPct = Math.abs(d.plan.entry - d.plan.stop) / d.plan.entry * 100;
+  const rank = idx != null ? `#${idx + 1}  ` : "";
 
-  return `${emoji} <b>${d.action} ${d.base}</b>  |  ${tf}
+  return `${emoji} ${rank}<b>${d.action} ${d.base}</b>  |  ${tf}
 
 <b>Entry:</b>  <code>${fmt(d.plan.entry)}</code>
 <b>Stop:</b>   <code>${fmt(d.plan.stop)}</code>
 <b>Target:</b> <code>${fmt(target)}</code>
 
 <b>R:R:</b>  ${rrText}  |  <b>Grade:</b>  ${d.grade}  |  <b>Conf:</b>  ${d.confluence}/8
-<b>Risk:</b>  ${riskPct.toFixed(1)}%  |  <b>Score:</b>  ${Math.round(d.score)}${d.rr && d.rr.method ? "\n<b>Target via:</b> " + d.rr.method : ""}${cautionText}
-
-<i>Not financial advice. DYOR.</i>`;
+<b>Risk:</b>  ${riskPct.toFixed(1)}%  |  <b>Score:</b>  ${Math.round(d.score)}${d.rr && d.rr.method ? "\n<b>Target via:</b> " + d.rr.method : ""}${cautionText}`;
 }
 
-// ---------- main scan ----------
-async function scan(timeframes = ["1h", "4h", "1d"]) {
-  console.log(`[${new Date().toISOString()}] Starting scan...`);
+function signalSnapshot(d) {
+  return {
+    base: d.base, action: d.action, side: d.side, grade: d.grade,
+    score: Math.round(d.score), confluence: d.confluence,
+    entry: d.plan?.entry, stop: d.plan?.stop,
+    target: d.plan?.srTarget || d.plan?.t1,
+    rr: d.rr?.rr, cautions: d.cautions || []
+  };
+}
 
+function loadDailyState() {
+  try { return JSON.parse(fs.readFileSync(STATE_FILE, "utf8")); }
+  catch { return null; }
+}
+
+function saveDailyState(signals) {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({
+    date: new Date().toISOString().slice(0, 10),
+    ts: Date.now(),
+    signals: signals.map(signalSnapshot)
+  }));
+}
+
+// ---------- core scan (shared by both modes) ----------
+async function scanTimeframes(timeframes) {
   const all = await getJSON("/api/v3/ticker/24hr");
   const { list: candidates } = buildUniverse(all, CONFIG.minQuoteVolume, CONFIG.poolSize);
   const fundingMap = await fetchBulkFunding();
 
   console.log(`Scanning ${candidates.length} coins across ${timeframes.join(", ")}...`);
 
-  const signals = [];
+  const allAnalyzed = [];
 
   for (const tf of timeframes) {
     const htf = HTF_MAP[tf] || tf;
@@ -628,7 +652,6 @@ async function scan(timeframes = ["1h", "4h", "1d"]) {
       analyzed.push(res);
     }
 
-    // Fetch L/S ratios for signaled coins
     const signaled = analyzed.filter(d => d.side !== "none");
     if (signaled.length) {
       const lsResults = await mapLimit(signaled, 4, async d => ({
@@ -640,7 +663,6 @@ async function scan(timeframes = ["1h", "4h", "1d"]) {
       });
     }
 
-    // Compute aggregate edge
     const edge = { long: { gw: 0, gl: 0 }, short: { gw: 0, gl: 0 } };
     analyzed.forEach(d => {
       if (d.side !== "long" && d.side !== "short") return;
@@ -652,44 +674,139 @@ async function scan(timeframes = ["1h", "4h", "1d"]) {
 
     for (const d of analyzed) {
       const act = computeAction(d, edgeData);
-      if (act.action === "WAIT") continue;
       d.action = act.action;
+      d.skipReason = act.reason;
       d.cautions = act.cautions;
-      // Telegram filter: only strong signals — clean (0 cautions), R:R >= 1.5
-      const isClean = !d.cautions || d.cautions.length === 0;
-      const goodRR = d.rr && d.rr.rr >= 1.5;
-      if (isClean && goodRR) signals.push({ ...d, tf });
+      d.tf = tf;
+      allAnalyzed.push(d);
     }
   }
 
-  // Sort: fewest cautions first, then by R:R descending
-  signals.sort((a, b) => {
-    const ac = (a.cautions || []).length, bc = (b.cautions || []).length;
-    if (ac !== bc) return ac - bc;
-    return (b.rr ? b.rr.rr : 0) - (a.rr ? a.rr.rr : 0);
-  });
+  return allAnalyzed;
+}
 
-  console.log(`Found ${signals.length} actionable signal(s)`);
+// ---------- DAILY MODE: morning briefing at 06:00 ----------
+async function runDaily() {
+  console.log("MODE: DAILY BRIEFING (1d timeframe, top 5)");
 
-  if (signals.length === 0) {
-    console.log("No strong signals — skipping Telegram (no spam).");
+  const analyzed = await scanTimeframes(["1d"]);
+
+  // Top 5 = actionable signals sorted by fewest cautions then best R:R
+  const actionable = analyzed
+    .filter(d => d.action !== "WAIT")
+    .sort((a, b) => {
+      const ac = (a.cautions || []).length, bc = (b.cautions || []).length;
+      if (ac !== bc) return ac - bc;
+      return (b.rr ? b.rr.rr : 0) - (a.rr ? a.rr.rr : 0);
+    })
+    .slice(0, 5);
+
+  if (actionable.length === 0) {
+    await sendTelegram(`\u{1F305} <b>Daily Briefing</b> — ${new Date().toISOString().slice(0, 10)}\n\nNo actionable signals on the daily timeframe today.\nAll gates require: grade A/B, R:R ≥ 1.0.\n\n<i>Will notify if strong setups appear during the day.</i>`);
+    saveDailyState([]);
     return;
   }
 
-  // Send each signal (max 5 per scan to avoid noise)
-  for (const sig of signals.slice(0, 5)) {
-    await sendTelegram(formatSignal(sig, sig.tf));
+  await sendTelegram(`\u{1F305} <b>Daily Briefing</b> — ${new Date().toISOString().slice(0, 10)}\n\nTop ${actionable.length} signal${actionable.length > 1 ? "s" : ""} on the <b>1D</b> timeframe:`);
+  await sleep(500);
+
+  for (let i = 0; i < actionable.length; i++) {
+    await sendTelegram(formatSignal(actionable[i], "1d", i));
     await sleep(500);
   }
 
-  if (signals.length > 1) {
-    await sendTelegram(`\u{1F310} Full dashboard: https://xtzaferis.github.io/daily-trading/`);
+  await sendTelegram(`\u{1F4CB} <i>Updates to these signals will be sent during the day.\nFull dashboard:</i> https://xtzaferis.github.io/daily-trading/\n\n<i>Not financial advice. DYOR.</i>`);
+
+  saveDailyState(actionable);
+  console.log(`Sent ${actionable.length} daily signals, state saved.`);
+}
+
+// ---------- HOURLY MODE: clean signals + daily updates ----------
+async function runHourly() {
+  console.log("MODE: HOURLY (1h/4h clean signals + daily updates)");
+
+  const analyzed = await scanTimeframes(["1h", "4h"]);
+
+  // 1) Send clean strong signals (same strict filter as before)
+  const clean = analyzed
+    .filter(d => d.action !== "WAIT" && (!d.cautions || d.cautions.length === 0) && d.rr && d.rr.rr >= 1.5)
+    .sort((a, b) => (b.rr ? b.rr.rr : 0) - (a.rr ? a.rr.rr : 0))
+    .slice(0, 5);
+
+  for (const sig of clean) {
+    await sendTelegram(formatSignal(sig, sig.tf));
+    await sleep(500);
+  }
+  if (clean.length) console.log(`Sent ${clean.length} clean signal(s)`);
+
+  // 2) Check for updates to the morning's daily signals
+  const state = loadDailyState();
+  if (!state || !state.signals || state.signals.length === 0) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (state.date !== today) {
+    console.log("Daily state is from a previous day, skipping update check.");
+    return;
+  }
+
+  console.log(`Checking ${state.signals.length} daily signal(s) for updates...`);
+  const dailyCheck = await scanTimeframes(["1d"]);
+  const updates = [];
+
+  for (const saved of state.signals) {
+    const current = dailyCheck.find(d => d.base === saved.base);
+    if (!current) continue;
+
+    const act = current.action || "WAIT";
+    const nowScore = Math.round(current.score);
+
+    // Signal invalidated: was BUY/SELL, now WAIT
+    if (act === "WAIT" && saved.action !== "WAIT") {
+      updates.push(`\u{1F6A8} <b>INVALIDATED:</b> <b>${saved.base}</b> was ${saved.action} → now WAIT\n<i>Reason: ${current.skipReason || "gates no longer pass"}</i>`);
+      saved.action = "WAIT";
+      continue;
+    }
+
+    // Direction flipped: BUY -> SELL or vice versa
+    if (act !== "WAIT" && act !== saved.action) {
+      updates.push(`\u{1F504} <b>FLIPPED:</b> <b>${saved.base}</b> was ${saved.action} → now ${act}\n<i>Score shifted from ${saved.score} to ${nowScore}</i>`);
+      saved.action = act;
+      saved.score = nowScore;
+      continue;
+    }
+
+    // Grade changed
+    if (current.grade !== saved.grade) {
+      const better = current.grade < saved.grade;
+      updates.push(`${better ? "⬆️" : "⬇️"} <b>GRADE CHANGE:</b> <b>${saved.base}</b> (${saved.action}) ${saved.grade} → ${current.grade}`);
+      saved.grade = current.grade;
+    }
+
+    // Score moved significantly (> 15 points)
+    if (Math.abs(nowScore - saved.score) > 15 && !updates.find(u => u.includes(saved.base))) {
+      const dir = nowScore > saved.score ? "strengthened" : "weakened";
+      updates.push(`\u{1F4CA} <b>UPDATE:</b> <b>${saved.base}</b> (${saved.action}) ${dir} — score ${saved.score} → ${nowScore}`);
+      saved.score = nowScore;
+    }
+  }
+
+  if (updates.length) {
+    await sendTelegram(`\u{1F514} <b>Daily Signal Updates</b>\n\n` + updates.join("\n\n"));
+    saveDailyState(state.signals.filter(s => s.action !== "WAIT").map(s => {
+      const cur = dailyCheck.find(d => d.base === s.base);
+      return cur ? signalSnapshot(cur) : s;
+    }));
+    console.log(`Sent ${updates.length} update(s)`);
+  } else {
+    console.log("No changes to daily signals.");
   }
 }
 
 // ---------- run ----------
-const timeframes = (process.env.TIMEFRAMES || "1h,4h,1d").split(",").map(s => s.trim());
-scan(timeframes).then(() => {
+const MODE = process.env.MODE || "auto";
+const isDaily = MODE === "daily" || (MODE === "auto" && new Date().getUTCHours() === 6);
+
+(isDaily ? runDaily() : runHourly()).then(() => {
   console.log("Done.");
   process.exit(0);
 }).catch(e => {

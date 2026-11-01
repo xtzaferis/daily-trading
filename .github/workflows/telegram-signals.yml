@@ -2,13 +2,13 @@ name: Telegram Signals
 
 on:
   schedule:
-    # Run at the top of every hour (catches 1h candle closes)
+    # Every hour at :02 — bot auto-detects daily (06:00 UTC) vs hourly mode
     - cron: '2 * * * *'
   workflow_dispatch:
     inputs:
-      timeframes:
-        description: 'Timeframes to scan (comma-separated)'
-        default: '1h,4h,1d'
+      mode:
+        description: 'Mode: auto (default), daily, or hourly'
+        default: 'auto'
 
 jobs:
   scan:
@@ -20,10 +20,17 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Restore daily state
+        uses: actions/cache@v4
+        with:
+          path: bot/daily-state.json
+          key: daily-signals-${{ github.run_id }}
+          restore-keys: daily-signals-
+
       - name: Run signal scanner
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TIMEFRAMES: ${{ github.event.inputs.timeframes || '1h,4h,1d' }}
+          MODE: ${{ github.event.inputs.mode || 'auto' }}
         run: node bot/telegram-bot.js
         timeout-minutes: 5
