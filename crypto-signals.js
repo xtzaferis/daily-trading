@@ -364,19 +364,52 @@ const gradeText = { A: "High", B: "Medium", C: "Low" };
 
 // R:R calculation using S/R levels
 function calcRR(price, stop, levels, side) {
+  const risk = side === "long" ? price - stop : stop - price;
+  if (risk <= 0) return { rr: NaN, target: null, method: null };
+
+  // Collect candidate targets: S/R levels + Fibonacci extensions
+  const candidates = [];
+
+  // S/R targets
   if (side === "long") {
-    const risk = price - stop;
-    if (risk <= 0) return { rr: NaN, target: null };
-    const targets = levels.filter(l => l.type === "R" && l.price > price * 1.003).sort((a, b) => a.price - b.price);
-    if (!targets.length) return { rr: NaN, target: null };
-    return { rr: (targets[0].price - price) / risk, target: targets[0].price };
+    levels.filter(l => l.type === "R" && l.price > price * 1.003)
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 5)
+      .forEach(l => candidates.push({ price: l.price, method: "S/R (" + l.strength + " touches)" }));
   } else {
-    const risk = stop - price;
-    if (risk <= 0) return { rr: NaN, target: null };
-    const targets = levels.filter(l => l.type === "S" && l.price < price * 0.997).sort((a, b) => b.price - a.price);
-    if (!targets.length) return { rr: NaN, target: null };
-    return { rr: (price - targets[0].price) / risk, target: targets[0].price };
+    levels.filter(l => l.type === "S" && l.price < price * 0.997)
+      .sort((a, b) => b.price - a.price)
+      .slice(0, 5)
+      .forEach(l => candidates.push({ price: l.price, method: "S/R (" + l.strength + " touches)" }));
   }
+
+  // Fibonacci extension targets (1.618, 2.618 of the risk distance)
+  const fib1 = side === "long" ? price + risk * 1.618 : price - risk * 1.618;
+  const fib2 = side === "long" ? price + risk * 2.618 : price - risk * 2.618;
+  candidates.push({ price: fib1, method: "Fib 1.618" });
+  candidates.push({ price: fib2, method: "Fib 2.618" });
+
+  // ATR-based targets (2x and 3x ATR)
+  candidates.push({ price: side === "long" ? price + risk * 2 : price - risk * 2, method: "2R ATR" });
+
+  // Pick the best target: nearest one that gives R:R >= 1.5, or the best available
+  let best = null;
+  for (const t of candidates) {
+    const reward = side === "long" ? t.price - price : price - t.price;
+    if (reward <= 0) continue;
+    const rr = reward / risk;
+    if (!best || (rr >= 1.5 && rr < (best.rr || Infinity)) || (!best.rr || best.rr < 1.5) && rr > best.rr) {
+      best = { rr, target: t.price, method: t.method };
+    }
+  }
+  // Prefer smallest R:R that's still >= 1.5
+  const good = candidates
+    .map(t => ({ ...t, rr: (side === "long" ? t.price - price : price - t.price) / risk }))
+    .filter(t => t.rr >= 1.5)
+    .sort((a, b) => a.rr - b.rr);
+  if (good.length) return { rr: good[0].rr, target: good[0].price, method: good[0].method };
+  if (best) return best;
+  return { rr: 1, target: side === "long" ? price + risk : price - risk, method: "1R ATR" };
 }
 
 // Backtest with trailing stop: after reaching 1R profit, move stop to breakeven.
@@ -513,28 +546,10 @@ function analyze(cs, htfTrend = 0, market = null, tf = "1d", funding = null) {
     : side === "short" ? { side: "SHORT", entry: c, stop: c + stopDist, t1: c - stopDist, t2: c - 3 * a }
     : null;
 
-  // R:R: check multiple S/R levels, pick the one with best R:R >= 1.5 if available
   let rr = null;
   if (plan) {
     rr = calcRR(c, plan.stop, I.levels, side);
     if (rr.target) plan.srTarget = rr.target;
-    // If nearest S/R gives poor R:R, try the next ones
-    if (isNaN(rr.rr) || rr.rr < 1.5) {
-      const farLevels = I.levels.filter(l => {
-        if (side === "long") return l.type === "R" && l.price > (rr.target || c) * 1.003;
-        return l.type === "S" && l.price < (rr.target || c) * 0.997;
-      }).sort((a, b) => side === "long" ? a.price - b.price : b.price - a.price);
-      if (farLevels.length) {
-        const alt = calcRR(c, plan.stop, [farLevels[0]], side);
-        if (!isNaN(alt.rr) && alt.rr > (rr.rr || 0)) { rr = alt; plan.srTarget = alt.target; }
-      }
-    }
-    // Final fallback: use ATR target for R:R if S/R gives nothing useful
-    if (isNaN(rr.rr) || rr.rr < 0.5) {
-      const atrRR = stopDist > 0 ? stopDist / stopDist : 1;
-      rr = { rr: atrRR, target: plan.t1 };
-      plan.srTarget = plan.t1;
-    }
   }
 
   const grade = confluence >= 6 ? "A" : confluence >= 4 ? "B" : "C";
@@ -872,6 +887,10 @@ async function load() {
       d.action = a.action;
       d.skipReason = a.reason;
       d.cautions = a.cautions;
+      const prevAction = state.prevAction && state.prevAction[d.base];
+      if (d.action !== "WAIT" && prevAction !== d.action) notifyAction(d);
+      if (!state.prevAction) state.prevAction = {};
+      state.prevAction[d.base] = d.action;
     });
 
     const dir = $("dir").value;
@@ -916,10 +935,122 @@ function updateCountdown() {
   $("countdown").textContent = `Next ${tf} candle closes in ${t}`;
 }
 
+// --- Enhanced alerts: sound + notification for BUY/SELL signals ---
+let alertSound = null;
+function playAlertSound() {
+  try {
+    if (!alertSound) {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      alertSound = ctx;
+    }
+    const ctx = alertSound, osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880; osc.type = "sine";
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.5);
+  } catch (e) {}
+}
+
 function notify(s, from, to) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   if (to === "SB" || to === "SS" || from === "SB" || from === "SS")
     new Notification(s + ": " + labelText[to], { body: "Was " + labelText[from] + " · " + $("tf").value });
+}
+
+function notifyAction(d) {
+  if (!d || d.action === "WAIT") return;
+  const clean = !d.cautions || d.cautions.length === 0;
+  playAlertSound();
+  if ("Notification" in window && Notification.permission === "granted") {
+    const title = `${d.action} ${d.base} (${clean ? "clean" : d.cautions.length + " cautions"})`;
+    const body = `Entry: ${fmt(d.plan.entry)} · Stop: ${fmt(d.plan.stop)} · Target: ${fmt(d.plan.srTarget || d.plan.t1)}\nR:R ${d.rr ? d.rr.rr.toFixed(1) : "–"}:1 · ${d.confluence}/8 confirmers`;
+    new Notification(title, { body, tag: d.base + d.action });
+  }
+}
+
+// --- Multi-timeframe overview: find the best BUY/SELL across all timeframes ---
+const MTF_TIMEFRAMES = ["15m", "1h", "4h", "1d"];
+let mtfRunning = false;
+
+async function runMTFScan() {
+  const wrap = $("mtfWrap");
+  if (!wrap) return;
+  if (mtfRunning) return;
+  mtfRunning = true;
+  wrap.style.display = "block";
+  $("mtfResult").innerHTML = '<span class="mute">Scanning 15m · 1h · 4h · 1d for the best setup…</span>';
+
+  const all = await getJSON("/api/v3/ticker/24hr");
+  const minVol = +$("minVol").value || CONFIG.minQuoteVolume;
+  const { list: candidates } = buildUniverse(all, "curated", minVol, CONFIG.poolSize);
+  const top5 = candidates.slice(0, 8);
+  const fundingMap = await fetchBulkFunding();
+
+  const results = [];
+  for (const tf of MTF_TIMEFRAMES) {
+    const htf = HTF_MAP[tf] || tf;
+    const btcKl = await fetchKlines("BTCUSDT", tf);
+    const btcCs = btcKl ? btcKl.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1) : null;
+    const market = btcCs ? marketContext(btcCs) : null;
+
+    const fetched = await mapLimit(top5, 4, async t => {
+      const [kl, htfKl] = await Promise.all([fetchKlines(t.symbol, tf), fetchKlines(t.symbol, htf, CONFIG.htfLimit)]);
+      return { symbol: t.symbol, kl, htfKl };
+    });
+
+    for (const f of fetched) {
+      if (!f.kl || f.kl.length < 60) continue;
+      const toC = raw => raw.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })).slice(0, -1);
+      const cs = toC(f.kl);
+      if (cs.length < 55) continue;
+      const htfCs = f.htfKl ? toC(f.htfKl) : null;
+      const base = f.symbol.slice(0, -4);
+      const res = analyze(cs, trendDir(htfCs), market, tf, fundingMap[f.symbol] || null);
+      const lsRatio = await fetchLongShortRatio(f.symbol);
+      refinePositioning(res, lsRatio);
+      const act = computeAction(res, state.edge);
+      res.action = act.action; res.skipReason = act.reason; res.cautions = act.cautions;
+      if (res.action !== "WAIT") {
+        results.push({ ...res, base, tf });
+      }
+    }
+  }
+
+  // Sort: fewest cautions first, then by R:R descending
+  results.sort((a, b) => {
+    const ac = (a.cautions || []).length, bc = (b.cautions || []).length;
+    if (ac !== bc) return ac - bc;
+    return (b.rr ? b.rr.rr : 0) - (a.rr ? a.rr.rr : 0);
+  });
+
+  if (!results.length) {
+    $("mtfResult").innerHTML = '<span class="mute">No clean BUY/SELL found on any timeframe right now. Check back after the next candle close.</span>';
+  } else {
+    const html = results.slice(0, 5).map(r => {
+      const badge = r.action === "BUY"
+        ? '<span class="action-badge action-buy" style="font-size:13px;padding:4px 12px">BUY</span>'
+        : '<span class="action-badge action-sell" style="font-size:13px;padding:4px 12px">SELL</span>';
+      const cautions = r.cautions && r.cautions.length
+        ? ` <span class="caution-tags">${r.cautions.map(c => `<span class="caution-tag">⚠ ${c}</span>`).join("")}</span>` : ' <span class="up" style="font-size:11px">✓ Clean</span>';
+      const rrText = r.rr ? r.rr.rr.toFixed(1) + ":1" : "–";
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line);flex-wrap:wrap">
+        ${badge} <b>${r.base}</b> <span class="mute">${r.tf}</span>
+        <span>Entry ${fmt(r.plan.entry)} → ${fmt(r.plan.srTarget || r.plan.t1)}</span>
+        <span>R:R <b class="${r.rr && r.rr.rr >= 2 ? "up" : ""}">${rrText}</b></span>
+        <span class="mute">${r.confluence}/8</span>${cautions}
+        <button class="mtf-go" data-base="${r.base}" data-tf="${r.tf}" style="margin-left:auto;font-size:12px;padding:4px 10px">View</button>
+      </div>`;
+    }).join("");
+    $("mtfResult").innerHTML = html;
+    document.querySelectorAll(".mtf-go").forEach(btn => {
+      btn.onclick = () => {
+        $("tf").value = btn.dataset.tf;
+        load().then(() => selectSymbol(btn.dataset.base, btn.dataset.tf));
+      };
+    });
+  }
+  mtfRunning = false;
 }
 
 // ---------- rendering ----------
@@ -1071,7 +1202,7 @@ function renderDetail() {
       <span>Stop (1.5×ATR)</span><span class="down">${fmt(p.stop)} (${(dist / p.entry * 100).toFixed(2)}%)</span>
       <span>Target 1 (1R)</span><span class="up">${fmt(p.t1)}</span>
       <span>Target 2 (2R)</span><span class="up">${fmt(p.t2)}</span>
-      ${p.srTarget ? `<span>S/R target</span><span class="up">${fmt(p.srTarget)}</span>` : ""}
+      ${p.srTarget ? `<span>Target (${d.rr && d.rr.method ? d.rr.method : "S/R"})</span><span class="up">${fmt(p.srTarget)}</span>` : ""}
       <span>Risk:Reward</span><span class="${rrClass}">${rrText} <span class="mute" style="font-size:11px">${rrAdvice}</span></span>
       <span>Risk amount</span><span>${riskUsd.toFixed(0)} USDT</span>
       <span>Position size</span><span>${qty.toPrecision(4)} ${s} (~${(qty * p.entry).toFixed(0)} USDT)</span></div>
@@ -1227,7 +1358,7 @@ function init() {
   addEventListener("resize", renderDetail);
   updateCountdown();
   setInterval(updateCountdown, 1000);
-  load();
+  load().then(() => { setTimeout(runMTFScan, 2000); });
   setInterval(load, 60000);
 }
 init();

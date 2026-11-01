@@ -188,6 +188,7 @@ li{margin:3px 0; font-size:13.5px}
   .adv #alerts{grid-column:1/-1}
   .spacer{display:none}
   #countdown,#status{white-space:normal; flex:1 1 100%; text-align:left}
+  .mtf-wrap .card{margin:12px 14px 0}
   .regime{margin:12px 14px 0}
   .stats{padding:12px 14px 0; grid-template-columns:1fr 1fr}
   main{padding:12px 14px; gap:12px}
