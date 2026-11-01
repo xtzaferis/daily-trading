@@ -652,11 +652,13 @@ async function scan(timeframes = ["1h", "4h", "1d"]) {
 
     for (const d of analyzed) {
       const act = computeAction(d, edgeData);
-      if (act.action !== "WAIT") {
-        d.action = act.action;
-        d.cautions = act.cautions;
-        signals.push({ ...d, tf });
-      }
+      if (act.action === "WAIT") continue;
+      d.action = act.action;
+      d.cautions = act.cautions;
+      // Telegram filter: only strong signals — clean (0 cautions), R:R >= 1.5
+      const isClean = !d.cautions || d.cautions.length === 0;
+      const goodRR = d.rr && d.rr.rr >= 1.5;
+      if (isClean && goodRR) signals.push({ ...d, tf });
     }
   }
 
@@ -670,27 +672,19 @@ async function scan(timeframes = ["1h", "4h", "1d"]) {
   console.log(`Found ${signals.length} actionable signal(s)`);
 
   if (signals.length === 0) {
-    const now = new Date().toLocaleTimeString("en-US", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
-    await sendTelegram(`\u{1F50D} <b>Scan complete</b> (${now} UTC)\n\nNo actionable BUY/SELL signals found.\nAll gates require: grade A/B, R:R ≥ 1.0, trend aligned.\n\n<i>Next scan at the next candle close.</i>`);
+    console.log("No strong signals — skipping Telegram (no spam).");
     return;
   }
 
-  // Send header
-  const now = new Date().toLocaleTimeString("en-US", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
-  await sendTelegram(`\u{1F4CA} <b>Signal scan</b> (${now} UTC)\n\n${signals.length} actionable signal(s) found:`);
-  await sleep(500);
-
-  // Send each signal
-  for (const sig of signals.slice(0, 10)) {
+  // Send each signal (max 5 per scan to avoid noise)
+  for (const sig of signals.slice(0, 5)) {
     await sendTelegram(formatSignal(sig, sig.tf));
     await sleep(500);
   }
 
-  // Summary footer
-  const buys = signals.filter(s => s.action === "BUY").length;
-  const sells = signals.filter(s => s.action === "SELL").length;
-  const clean = signals.filter(s => !s.cautions || s.cautions.length === 0).length;
-  await sendTelegram(`\u{1F4CB} <b>Summary:</b> ${buys} BUY / ${sells} SELL / ${clean} clean\n\n\u{1F310} Dashboard: https://xtzaferis.github.io/daily-trading/`);
+  if (signals.length > 1) {
+    await sendTelegram(`\u{1F310} Full dashboard: https://xtzaferis.github.io/daily-trading/`);
+  }
 }
 
 // ---------- run ----------
