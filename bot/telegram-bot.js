@@ -319,28 +319,40 @@ function scoreAt(I, i) {
 
 function calcRR(price, stop, levels, side) {
   const risk = side === "long" ? price - stop : stop - price;
-  if (risk <= 0) return { rr: NaN, target: null, method: null };
+  if (risk <= 0) return { rr: NaN, target: null, method: null, tp1: null, tp2: null, tp3: null };
   const candidates = [];
   if (side === "long") {
     levels.filter(l => l.type === "R" && l.price > price * 1.003)
       .sort((a, b) => a.price - b.price).slice(0, 5)
-      .forEach(l => candidates.push({ price: l.price, method: "S/R (" + l.strength + " touches)" }));
+      .forEach(l => candidates.push({ price: l.price, method: "S/R (" + l.strength + ")" }));
   } else {
     levels.filter(l => l.type === "S" && l.price < price * 0.997)
       .sort((a, b) => b.price - a.price).slice(0, 5)
-      .forEach(l => candidates.push({ price: l.price, method: "S/R (" + l.strength + " touches)" }));
+      .forEach(l => candidates.push({ price: l.price, method: "S/R (" + l.strength + ")" }));
   }
   const fib1 = side === "long" ? price + risk * 1.618 : price - risk * 1.618;
   const fib2 = side === "long" ? price + risk * 2.618 : price - risk * 2.618;
   candidates.push({ price: fib1, method: "Fib 1.618" });
   candidates.push({ price: fib2, method: "Fib 2.618" });
   candidates.push({ price: side === "long" ? price + risk * 2 : price - risk * 2, method: "2R ATR" });
-  const good = candidates
+
+  const scored = candidates
     .map(t => ({ ...t, rr: (side === "long" ? t.price - price : price - t.price) / risk }))
-    .filter(t => t.rr >= 1.5)
+    .filter(t => t.rr > 0)
     .sort((a, b) => a.rr - b.rr);
-  if (good.length) return { rr: good[0].rr, target: good[0].price, method: good[0].method };
-  return { rr: 1, target: side === "long" ? price + risk : price - risk, method: "1R ATR" };
+
+  // TP1 = nearest S/R or Fib 1.0 (conservative), TP2 = Fib 1.618, TP3 = Fib 2.618
+  const tp1Price = side === "long" ? price + risk * 1.0 : price - risk * 1.0;
+  const nearSR = scored.find(t => t.rr >= 0.8 && t.rr <= 1.5 && t.method.startsWith("S/R"));
+  const tp1 = { price: nearSR ? nearSR.price : tp1Price, method: nearSR ? nearSR.method : "1R ATR",
+    rr: nearSR ? nearSR.rr : 1.0 };
+  const tp2 = { price: fib1, method: "Fib 1.618", rr: 1.618 };
+  const tp3 = { price: fib2, method: "Fib 2.618", rr: 2.618 };
+
+  const good = scored.filter(t => t.rr >= 1.5);
+  const primary = good.length ? good[0] : scored.length ? scored[scored.length - 1] : null;
+  if (primary) return { rr: primary.rr, target: primary.price, method: primary.method, tp1, tp2, tp3 };
+  return { rr: 1, target: tp1.price, method: "1R ATR", tp1, tp2, tp3 };
 }
 
 function backtest(I, side = "long", enter = 25, fee = 0.001) {
@@ -576,26 +588,57 @@ const path = require("path");
 const STATE_FILE = path.join(__dirname, "daily-state.json");
 const LOG_FILE = path.join(__dirname, "signal-log.json");
 
-const TF_EXPIRY = { "5m": 6, "15m": 12, "1h": 24, "4h": 72, "1d": 168, "1w": 336 };
+const TF_EXPIRY_H = { "1h": 4, "4h": 12, "1d": 48, "1w": 168 };
+const TF_VALID_LABEL = { "1h": "4h", "4h": "12h", "1d": "48h", "1w": "7d" };
+const REF_ACCOUNT = 1000;
+const REF_RISK_PCT = 0.01;
 
 function formatSignal(d, tf, idx) {
   const emoji = d.action === "BUY" ? "\u{1F7E2}" : "\u{1F534}";
-  const cautionText = d.cautions && d.cautions.length
-    ? "\n⚠️ Cautions: " + d.cautions.join(", ")
-    : "\n✅ Clean setup";
-  const rrText = d.rr ? d.rr.rr.toFixed(1) + ":1" : "N/A";
-  const target = d.plan.srTarget || d.plan.t1;
-  const riskPct = Math.abs(d.plan.entry - d.plan.stop) / d.plan.entry * 100;
   const rank = idx != null ? `#${idx + 1}  ` : "";
 
-  return `${emoji} ${rank}<b>${d.action} ${d.base}</b>  |  ${tf}
+  // Entry zone: ATR-based band around entry
+  const zoneHalf = d.atr ? d.atr * 0.3 : d.plan.entry * 0.003;
+  const zoneLo = d.plan.entry - zoneHalf;
+  const zoneHi = d.plan.entry + zoneHalf;
 
-<b>Entry:</b>  <code>${fmt(d.plan.entry)}</code>
-<b>Stop:</b>   <code>${fmt(d.plan.stop)}</code>
-<b>Target:</b> <code>${fmt(target)}</code>
+  // Multi-target TP lines
+  const tp1 = d.rr?.tp1, tp2 = d.rr?.tp2, tp3 = d.rr?.tp3;
+  const tp1Line = tp1 ? `<b>TP1:</b> <code>${fmt(tp1.price)}</code>  (${tp1.rr.toFixed(1)}R — close 60%)` : "";
+  const tp2Line = tp2 ? `<b>TP2:</b> <code>${fmt(tp2.price)}</code>  (${tp2.rr.toFixed(1)}R — close 30%)` : "";
+  const tp3Line = tp3 ? `<b>TP3:</b> <code>${fmt(tp3.price)}</code>  (${tp3.rr.toFixed(1)}R — close 10%)` : "";
 
-<b>R:R:</b>  ${rrText}  |  <b>Grade:</b>  ${d.grade}  |  <b>Conf:</b>  ${d.confluence}/8
-<b>Risk:</b>  ${riskPct.toFixed(1)}%  |  <b>Score:</b>  ${Math.round(d.score)}${d.rr && d.rr.method ? "\n<b>Target via:</b> " + d.rr.method : ""}${cautionText}`;
+  // Position sizing for $1,000 account at 1% risk
+  const stopDist = Math.abs(d.plan.entry - d.plan.stop);
+  const riskUsd = REF_ACCOUNT * REF_RISK_PCT;
+  const posSize = stopDist > 0 ? riskUsd / stopDist : 0;
+  const posValue = posSize * d.plan.entry;
+  const leverage = posValue > REF_ACCOUNT ? Math.ceil(posValue / REF_ACCOUNT) : 1;
+  const sizeText = `${posSize.toFixed(posSize >= 1 ? 2 : 6)} ${d.base} ($${posValue.toFixed(0)}) risking $${riskUsd.toFixed(0)}`;
+  const levText = leverage > 1 ? `  |  ${leverage}x leverage` : "";
+
+  // Expiry
+  const expiryH = TF_EXPIRY_H[tf] || 48;
+  const expiresAt = new Date(Date.now() + expiryH * 3600000);
+  const expiryStr = expiresAt.toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) + " UTC";
+
+  const cautionText = d.cautions && d.cautions.length
+    ? "\n⚠️ " + d.cautions.join(", ")
+    : "\n✅ Clean setup";
+
+  return `${emoji} ${rank}<b>${d.action} ${d.base}</b>  |  ${tf}  |  Grade ${d.grade}
+
+<b>Entry zone:</b> <code>${fmt(zoneLo)}</code> — <code>${fmt(zoneHi)}</code>
+<b>Stop:</b>  <code>${fmt(d.plan.stop)}</code>
+${tp1Line}
+${tp2Line}
+${tp3Line}
+
+<b>Size:</b> ${sizeText}${levText}
+<b>R:R:</b> ${d.rr ? d.rr.rr.toFixed(1) : "–"}:1  |  <b>Conf:</b> ${d.confluence}/8
+⏰ Valid until: ${expiryStr}${cautionText}
+
+<i>Based on $${REF_ACCOUNT} account, ${(REF_RISK_PCT * 100).toFixed(0)}% risk. Not financial advice.</i>`;
 }
 
 function signalSnapshot(d) {
@@ -633,14 +676,22 @@ function logSignal(d, tf) {
   const key = `${d.base}-${tf}-${d.action}`;
   const hasOpen = log.signals.some(s => s.key === key && s.status === "open");
   if (hasOpen) return;
+  const zoneHalf = d.atr ? d.atr * 0.3 : d.plan.entry * 0.003;
+  const expiryH = TF_EXPIRY_H[tf] || 48;
   log.signals.push({
     key, base: d.base, action: d.action, side: d.side, tf,
     grade: d.grade, confluence: d.confluence, rr: d.rr?.rr,
     entry: d.plan.entry, stop: d.plan.stop,
-    target: d.plan.srTarget || d.plan.t1,
+    entryLo: d.plan.entry - zoneHalf, entryHi: d.plan.entry + zoneHalf,
+    tp1: d.rr?.tp1?.price || null,
+    tp2: d.rr?.tp2?.price || null,
+    tp3: d.rr?.tp3?.price || null,
+    target: d.rr?.tp2?.price || d.plan.srTarget || d.plan.t1,
     cautions: d.cautions || [],
     timestamp: new Date().toISOString(),
-    status: "open", exitPrice: null, exitTime: null, pnlPct: null
+    expiresAt: new Date(Date.now() + expiryH * 3600000).toISOString(),
+    status: "open", tp1Hit: false, tp2Hit: false, tp3Hit: false,
+    exitPrice: null, exitTime: null, pnlPct: null
   });
   saveLog(log);
 }
@@ -651,9 +702,10 @@ async function checkOutcomes() {
   if (!open.length) return [];
 
   const results = [];
+  const tpNotifications = [];
   for (const sig of open) {
-    const expiryHours = TF_EXPIRY[sig.tf] || 168;
     const age = (Date.now() - new Date(sig.timestamp).getTime()) / 3600000;
+    const expired = sig.expiresAt && Date.now() >= new Date(sig.expiresAt).getTime();
 
     const kl = await fetchKlines(sig.base + "USDT", "1h", Math.min(Math.ceil(age) + 1, 500));
     if (!kl || !kl.length) continue;
@@ -664,34 +716,70 @@ async function checkOutcomes() {
     let hit = null;
     for (const k of candles) {
       const high = +k[2], low = +k[3];
-      if (sig.side === "long") {
-        if (low <= sig.stop) { hit = { status: "loss", price: sig.stop }; break; }
-        if (high >= sig.target) { hit = { status: "win", price: sig.target }; break; }
-      } else {
-        if (high >= sig.stop) { hit = { status: "loss", price: sig.stop }; break; }
-        if (low <= sig.target) { hit = { status: "win", price: sig.target }; break; }
+
+      // Check stop first (conservative: assume stop hit before target in same candle)
+      if (sig.side === "long" && low <= sig.stop) { hit = { status: "loss", price: sig.stop }; break; }
+      if (sig.side === "short" && high >= sig.stop) { hit = { status: "loss", price: sig.stop }; break; }
+
+      // Check TP hits in order
+      if (sig.tp1 && !sig.tp1Hit) {
+        if ((sig.side === "long" && high >= sig.tp1) || (sig.side === "short" && low <= sig.tp1)) {
+          sig.tp1Hit = true;
+          sig.stop = sig.entry;
+          tpNotifications.push(`\u{1F3AF} <b>TP1 HIT: ${sig.action} ${sig.base}</b> (${sig.tf})\nTP1: <code>${fmt(sig.tp1)}</code> reached — stop moved to breakeven\n<i>60% closed, holding 40% for TP2/TP3</i>`);
+        }
+      }
+      if (sig.tp2 && !sig.tp2Hit) {
+        if ((sig.side === "long" && high >= sig.tp2) || (sig.side === "short" && low <= sig.tp2)) {
+          sig.tp2Hit = true;
+          tpNotifications.push(`\u{1F3AF}\u{1F3AF} <b>TP2 HIT: ${sig.action} ${sig.base}</b> (${sig.tf})\nTP2: <code>${fmt(sig.tp2)}</code> reached\n<i>90% closed, holding 10% for TP3</i>`);
+        }
+      }
+      if (sig.tp3 && !sig.tp3Hit) {
+        if ((sig.side === "long" && high >= sig.tp3) || (sig.side === "short" && low <= sig.tp3)) {
+          sig.tp3Hit = true;
+          hit = { status: "win", price: sig.tp3 };
+          break;
+        }
       }
     }
 
-    if (!hit && age >= expiryHours) {
+    // Expiry: close at current price if time ran out
+    if (!hit && expired) {
       const lastPrice = +kl[kl.length - 1][4];
       const pnl = sig.side === "long" ? (lastPrice - sig.entry) / sig.entry : (sig.entry - lastPrice) / sig.entry;
-      hit = { status: pnl > 0 ? "win" : "loss", price: lastPrice };
+      hit = { status: sig.tp1Hit ? "win" : (pnl > 0 ? "win" : "loss"), price: lastPrice, expired: true };
     }
 
     if (hit) {
       sig.status = hit.status;
       sig.exitPrice = hit.price;
       sig.exitTime = new Date().toISOString();
-      sig.pnlPct = sig.side === "long"
-        ? (hit.price - sig.entry) / sig.entry * 100
-        : (sig.entry - hit.price) / sig.entry * 100;
+      // Weighted P&L across TPs: 60% at TP1 (if hit) + 30% at TP2 (if hit) + rest at exit
+      let pnl = 0;
+      if (sig.tp1Hit && sig.tp1) {
+        const tp1pnl = sig.side === "long" ? (sig.tp1 - sig.entry) / sig.entry : (sig.entry - sig.tp1) / sig.entry;
+        pnl += tp1pnl * 0.6;
+        if (sig.tp2Hit && sig.tp2) {
+          const tp2pnl = sig.side === "long" ? (sig.tp2 - sig.entry) / sig.entry : (sig.entry - sig.tp2) / sig.entry;
+          pnl += tp2pnl * 0.3;
+          const exitPnl = sig.side === "long" ? (hit.price - sig.entry) / sig.entry : (sig.entry - hit.price) / sig.entry;
+          pnl += exitPnl * 0.1;
+        } else {
+          const exitPnl = sig.side === "long" ? (hit.price - sig.entry) / sig.entry : (sig.entry - hit.price) / sig.entry;
+          pnl += exitPnl * 0.4;
+        }
+      } else {
+        pnl = sig.side === "long" ? (hit.price - sig.entry) / sig.entry : (sig.entry - hit.price) / sig.entry;
+      }
+      sig.pnlPct = pnl * 100;
+      sig.expired = hit.expired || false;
       results.push(sig);
     }
   }
 
-  if (results.length) saveLog(log);
-  return results;
+  if (results.length || tpNotifications.length) saveLog(log);
+  return { closed: results, tpNotifications };
 }
 
 function formatOutcome(sig) {
@@ -699,7 +787,13 @@ function formatOutcome(sig) {
   const emoji = isWin ? "✅" : "❌";
   const label = isWin ? "WIN" : "LOSS";
   const pnl = sig.pnlPct >= 0 ? `+${sig.pnlPct.toFixed(2)}%` : `${sig.pnlPct.toFixed(2)}%`;
-  return `${emoji} <b>${label}: ${sig.action} ${sig.base}</b> (${sig.tf})\nEntry: <code>${fmt(sig.entry)}</code> → Exit: <code>${fmt(sig.exitPrice)}</code>\nP&amp;L: <b>${pnl}</b>`;
+  const tpSummary = [
+    sig.tp1Hit ? "\u{1F3AF} TP1" : null,
+    sig.tp2Hit ? "\u{1F3AF} TP2" : null,
+    sig.tp3Hit ? "\u{1F3AF} TP3" : null
+  ].filter(Boolean).join("  ");
+  const expTag = sig.expired ? " (expired)" : "";
+  return `${emoji} <b>${label}: ${sig.action} ${sig.base}</b> (${sig.tf})${expTag}\nEntry: <code>${fmt(sig.entry)}</code> → Exit: <code>${fmt(sig.exitPrice)}</code>\n${tpSummary ? tpSummary + "\n" : ""}P&amp;L: <b>${pnl}</b>`;
 }
 
 function buildScorecard() {
@@ -874,10 +968,44 @@ async function runHourly() {
   const analyzed = await scanTimeframes(["1h", "4h"]);
 
   // 1) Send clean strong signals (same strict filter as before)
-  const clean = analyzed
+  let clean = analyzed
     .filter(d => d.action !== "WAIT" && (!d.cautions || d.cautions.length === 0) && d.rr && d.rr.rr >= 1.5)
-    .sort((a, b) => (b.rr ? b.rr.rr : 0) - (a.rr ? a.rr.rr : 0))
-    .slice(0, 5);
+    .sort((a, b) => (b.rr ? b.rr.rr : 0) - (a.rr ? a.rr.rr : 0));
+
+  // Conflict filter: if same coin has BUY on 1h and SELL on 4h, keep higher TF only
+  const TF_RANK = { "5m": 0, "15m": 1, "1h": 2, "4h": 3, "1d": 4, "1w": 5 };
+  const byBase = {};
+  for (const sig of clean) {
+    if (!byBase[sig.base]) byBase[sig.base] = [];
+    byBase[sig.base].push(sig);
+  }
+  const filtered = [];
+  for (const [base, sigs] of Object.entries(byBase)) {
+    const actions = new Set(sigs.map(s => s.action));
+    if (actions.size > 1) {
+      // Conflict: keep highest timeframe signal only
+      sigs.sort((a, b) => (TF_RANK[b.tf] || 0) - (TF_RANK[a.tf] || 0));
+      filtered.push(sigs[0]);
+      console.log(`Conflict on ${base}: ${sigs.map(s => s.action + " " + s.tf).join(" vs ")} — kept ${sigs[0].tf}`);
+    } else {
+      // No conflict: keep highest TF to avoid duplicate
+      sigs.sort((a, b) => (TF_RANK[b.tf] || 0) - (TF_RANK[a.tf] || 0));
+      filtered.push(sigs[0]);
+    }
+  }
+  clean = filtered.slice(0, 5);
+
+  // Also check against open daily signals for cross-TF conflicts
+  const log = loadLog();
+  const openDaily = log.signals.filter(s => s.status === "open" && s.tf === "1d");
+  clean = clean.filter(sig => {
+    const conflict = openDaily.find(d => d.base === sig.base && d.action !== sig.action);
+    if (conflict) {
+      console.log(`Skipped ${sig.action} ${sig.base} ${sig.tf} — conflicts with open ${conflict.action} on 1d`);
+      return false;
+    }
+    return true;
+  });
 
   for (const sig of clean) {
     await sendTelegram(formatSignal(sig, sig.tf));
@@ -888,12 +1016,17 @@ async function runHourly() {
 
   // Check outcomes for all open signals
   console.log("Checking open signal outcomes...");
-  const outcomes = await checkOutcomes();
-  for (const sig of outcomes) {
+  const { closed, tpNotifications } = await checkOutcomes();
+  for (const msg of tpNotifications) {
+    await sendTelegram(msg);
+    await sleep(500);
+  }
+  for (const sig of closed) {
     await sendTelegram(formatOutcome(sig));
     await sleep(500);
   }
-  if (outcomes.length) console.log(`${outcomes.length} signal(s) closed`);
+  if (tpNotifications.length) console.log(`${tpNotifications.length} TP hit(s)`);
+  if (closed.length) console.log(`${closed.length} signal(s) closed`);
 
   // 2) Check for updates to the morning's daily signals
   const state = loadDailyState();
@@ -958,11 +1091,50 @@ async function runHourly() {
   }
 }
 
+// ---------- export track record data for the public page ----------
+function exportTrackRecord() {
+  const log = loadLog();
+  const allClosed = log.signals.filter(s => s.status !== "open");
+  const openSigs = log.signals.filter(s => s.status === "open");
+  const wins = allClosed.filter(s => s.status === "win");
+  const totalPnl = allClosed.reduce((sum, s) => sum + (s.pnlPct || 0), 0);
+  const grossWin = allClosed.filter(s => s.pnlPct > 0).reduce((s, x) => s + x.pnlPct, 0);
+  const grossLoss = Math.abs(allClosed.filter(s => s.pnlPct < 0).reduce((s, x) => s + x.pnlPct, 0));
+
+  const data = {
+    updated: new Date().toISOString(),
+    stats: {
+      total: allClosed.length,
+      open: openSigs.length,
+      wins: wins.length,
+      winRate: allClosed.length ? (wins.length / allClosed.length * 100) : 0,
+      totalPnl,
+      profitFactor: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? 999 : 0),
+      avgPnl: allClosed.length ? totalPnl / allClosed.length : 0
+    },
+    signals: log.signals.map(s => ({
+      date: s.timestamp, base: s.base, action: s.action, tf: s.tf,
+      grade: s.grade, confluence: s.confluence,
+      entry: s.entry, stop: s.stop,
+      tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
+      entryLo: s.entryLo, entryHi: s.entryHi,
+      status: s.status, exitPrice: s.exitPrice, exitTime: s.exitTime,
+      pnlPct: s.pnlPct, tp1Hit: s.tp1Hit, tp2Hit: s.tp2Hit, tp3Hit: s.tp3Hit,
+      expired: s.expired, cautions: s.cautions
+    }))
+  };
+
+  const outPath = path.join(__dirname, "..", "track-record-data.json");
+  fs.writeFileSync(outPath, JSON.stringify(data, null, 2));
+  console.log("Track record data exported.");
+}
+
 // ---------- run ----------
 const MODE = process.env.MODE || "auto";
 const isDaily = MODE === "daily" || (MODE === "auto" && new Date().getUTCHours() === 6);
 
 (isDaily ? runDaily() : runHourly()).then(() => {
+  exportTrackRecord();
   console.log("Done.");
   process.exit(0);
 }).catch(e => {

@@ -1,0 +1,174 @@
+{
+  "updated": "2026-11-02T17:37:56.685Z",
+  "stats": {
+    "total": 0,
+    "open": 8,
+    "wins": 0,
+    "winRate": 0,
+    "totalPnl": 0,
+    "profitFactor": 0,
+    "avgPnl": 0
+  },
+  "signals": [
+    {
+      "date": "2026-11-01T14:13:17.212Z",
+      "base": "DOGE",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 8,
+      "entry": 0.07563,
+      "stop": 0.08133840439676626,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "cautions": [
+        "Against BTC"
+      ]
+    },
+    {
+      "date": "2026-11-01T14:13:17.215Z",
+      "base": "ETH",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 8,
+      "entry": 2255.66,
+      "stop": 2386.044762854898,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "cautions": [
+        "Against BTC"
+      ]
+    },
+    {
+      "date": "2026-11-01T14:13:17.218Z",
+      "base": "ZEC",
+      "action": "BUY",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 7,
+      "entry": 1251.42,
+      "stop": 1085.425617960499,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "cautions": [
+        "TF edge weak"
+      ]
+    },
+    {
+      "date": "2026-11-01T14:13:17.221Z",
+      "base": "AVAX",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 8,
+      "entry": 8.579,
+      "stop": 9.40512695881644,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "cautions": [
+        "Against BTC"
+      ]
+    },
+    {
+      "date": "2026-11-01T14:13:17.224Z",
+      "base": "SUI",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 8,
+      "entry": 0.8994,
+      "stop": 0.9947843939712173,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "cautions": [
+        "Against BTC"
+      ]
+    },
+    {
+      "date": "2026-11-02T17:37:08.853Z",
+      "base": "XAUT",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 7,
+      "entry": 3893.72,
+      "stop": 3972.394678768809,
+      "tp1": 3815.0453212311904,
+      "tp2": 3766.424369752066,
+      "tp3": 3687.749690983257,
+      "entryLo": 3877.985064246238,
+      "entryHi": 3909.4549357537617,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
+      "cautions": [
+        "Against BTC"
+      ]
+    },
+    {
+      "date": "2026-11-02T17:37:08.860Z",
+      "base": "BNB",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 7,
+      "entry": 712.69,
+      "stop": 748.2321559035662,
+      "tp1": 680,
+      "tp2": 655.18279174803,
+      "tp3": 619.6406358444639,
+      "entryLo": 705.5815688192869,
+      "entryHi": 719.7984311807132,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
+      "cautions": [
+        "Against BTC"
+      ]
+    },
+    {
+      "date": "2026-11-02T17:37:08.864Z",
+      "base": "SOL",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 8,
+      "entry": 94.53,
+      "stop": 100.9609672506315,
+      "tp1": 85.11,
+      "tp2": 84.12469498847824,
+      "tp3": 77.69372773784674,
+      "entryLo": 93.2438065498737,
+      "entryHi": 95.8161934501263,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
+      "cautions": [
+        "Against BTC"
+      ]
+    }
+  ]
+}

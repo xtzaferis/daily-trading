@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0e13">
+<title>CZ Crypto Signals — Track Record</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --bg: #0b0e13; --card: #161b22; --line: #21262d; --fg: #e6edf3;
+  --mute: #8b949e; --up: #2ea36a; --down: #e5534b; --blue: #58a6ff;
+  --yellow: #d29922;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.5; }
+header { padding: 24px 20px 16px; border-bottom: 1px solid var(--line); }
+h1 { font-size: 22px; font-weight: 700; }
+.sub { color: var(--mute); font-size: 13px; margin-top: 4px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 20px; }
+.stat-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; text-align: center; }
+.stat-val { font-size: 28px; font-weight: 700; }
+.stat-label { font-size: 12px; color: var(--mute); margin-top: 2px; }
+.up { color: var(--up); } .down { color: var(--down); }
+.filters { padding: 12px 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.filters label { font-size: 13px; color: var(--mute); }
+.filters select, .filters input { background: var(--card); border: 1px solid var(--line); color: var(--fg); padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+.table-wrap { overflow-x: auto; padding: 0 20px 20px; }
+table { width: 100%; border-collapse: collapse; min-width: 700px; font-size: 13px; }
+th { background: var(--card); padding: 10px 8px; text-align: left; font-weight: 600; font-size: 12px; color: var(--mute); border-bottom: 1px solid var(--line); position: sticky; top: 0; }
+td { padding: 10px 8px; border-bottom: 1px solid var(--line); }
+tr:hover { background: rgba(88,166,255,0.04); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-buy { background: rgba(46,163,106,0.15); color: var(--up); }
+.badge-sell { background: rgba(229,83,75,0.15); color: var(--down); }
+.badge-win { background: rgba(46,163,106,0.2); color: var(--up); }
+.badge-loss { background: rgba(229,83,75,0.2); color: var(--down); }
+.badge-open { background: rgba(88,166,255,0.15); color: var(--blue); }
+.badge-expired { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.tp-dots span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
+.tp-hit { background: var(--up); } .tp-miss { background: var(--line); }
+.mute { color: var(--mute); }
+.cta { text-align: center; padding: 24px 20px; }
+.cta a { display: inline-block; background: var(--blue); color: #fff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; }
+#loading { text-align: center; padding: 40px; color: var(--mute); }
+@media (max-width: 600px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .stat-val { font-size: 22px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>CZ Crypto Signals — Track Record</h1>
+  <div class="sub">Verified, automated performance log. Every signal is tracked from entry to exit.</div>
+</header>
+
+<div class="stats-grid" id="stats"></div>
+
+<div class="filters">
+  <label>Status <select id="fStatus"><option value="all">All</option><option value="win">Wins</option><option value="loss">Losses</option><option value="open">Open</option></select></label>
+  <label>Timeframe <select id="fTf"><option value="all">All</option><option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option></select></label>
+  <label>Action <select id="fAction"><option value="all">All</option><option value="BUY">BUY</option><option value="SELL">SELL</option></select></label>
+  <label>Search <input id="fSearch" type="text" placeholder="e.g. BTC, ETH"></label>
+  <span class="mute" id="count"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Coin</th><th>Action</th><th>TF</th><th>Grade</th>
+      <th>Entry Zone</th><th>Stop</th><th>TP1</th><th>TP2</th><th>TP3</th>
+      <th>Status</th><th>Exit</th><th>P&L</th><th>TPs</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+<div id="loading">Loading track record data...</div>
+
+<div class="cta">
+  <a href="https://t.me/cz_crypto_signals">Join the Telegram Channel</a>
+</div>
+
+<script>
+const fmt = p => p >= 1000 ? p.toLocaleString(undefined,{maximumFractionDigits:1}) : p >= 1 ? p.toFixed(3) : p.toFixed(6);
+
+async function init() {
+  let data;
+  try {
+    const r = await fetch("track-record-data.json?t=" + Date.now());
+    if (!r.ok) throw new Error(r.status);
+    data = await r.json();
+  } catch (e) {
+    document.getElementById("loading").textContent = "No track record data yet. Signals will appear here once the bot starts tracking.";
+    return;
+  }
+  document.getElementById("loading").style.display = "none";
+
+  const s = data.stats;
+  document.getElementById("stats").innerHTML = `
+    <div class="stat-card"><div class="stat-val">${s.total}</div><div class="stat-label">Closed Trades</div></div>
+    <div class="stat-card"><div class="stat-val ${s.winRate >= 50 ? 'up' : 'down'}">${s.winRate.toFixed(1)}%</div><div class="stat-label">Win Rate</div></div>
+    <div class="stat-card"><div class="stat-val ${s.totalPnl >= 0 ? 'up' : 'down'}">${s.totalPnl >= 0 ? '+' : ''}${s.totalPnl.toFixed(2)}%</div><div class="stat-label">Total P&L</div></div>
+    <div class="stat-card"><div class="stat-val">${s.profitFactor >= 999 ? '∞' : s.profitFactor.toFixed(2)}</div><div class="stat-label">Profit Factor</div></div>
+    <div class="stat-card"><div class="stat-val ${s.avgPnl >= 0 ? 'up' : 'down'}">${s.avgPnl >= 0 ? '+' : ''}${s.avgPnl.toFixed(2)}%</div><div class="stat-label">Avg P&L / Trade</div></div>
+    <div class="stat-card"><div class="stat-val">${s.open}</div><div class="stat-label">Open Trades</div></div>
+  `;
+
+  const signals = data.signals.slice().reverse();
+
+  function render() {
+    const fs = document.getElementById("fStatus").value;
+    const ft = document.getElementById("fTf").value;
+    const fa = document.getElementById("fAction").value;
+    const fq = document.getElementById("fSearch").value.toUpperCase();
+
+    const filtered = signals.filter(s => {
+      if (fs !== "all" && s.status !== fs) return false;
+      if (ft !== "all" && s.tf !== ft) return false;
+      if (fa !== "all" && s.action !== fa) return false;
+      if (fq && !s.base.includes(fq)) return false;
+      return true;
+    });
+
+    document.getElementById("count").textContent = filtered.length + " signal" + (filtered.length !== 1 ? "s" : "");
+
+    document.getElementById("rows").innerHTML = filtered.map(s => {
+      const date = new Date(s.date).toLocaleDateString("en-US", {month:"short",day:"numeric"});
+      const actionCls = s.action === "BUY" ? "badge-buy" : "badge-sell";
+      const statusCls = s.status === "win" ? "badge-win" : s.status === "loss" ? "badge-loss" : s.status === "open" ? "badge-open" : "badge-expired";
+      const statusLabel = s.expired ? "EXPIRED" : s.status.toUpperCase();
+      const pnl = s.pnlPct != null ? (s.pnlPct >= 0 ? "+" : "") + s.pnlPct.toFixed(2) + "%" : "–";
+      const pnlCls = s.pnlPct != null ? (s.pnlPct >= 0 ? "up" : "down") : "mute";
+      const entryZone = s.entryLo && s.entryHi ? fmt(s.entryLo) + " – " + fmt(s.entryHi) : fmt(s.entry);
+      const tpDots = `<div class="tp-dots">
+        <span class="${s.tp1Hit ? 'tp-hit' : 'tp-miss'}" title="TP1"></span>
+        <span class="${s.tp2Hit ? 'tp-hit' : 'tp-miss'}" title="TP2"></span>
+        <span class="${s.tp3Hit ? 'tp-hit' : 'tp-miss'}" title="TP3"></span>
+      </div>`;
+      return `<tr>
+        <td>${date}</td><td><b>${s.base}</b></td>
+        <td><span class="badge ${actionCls}">${s.action}</span></td>
+        <td>${s.tf}</td><td>${s.grade}</td>
+        <td>${entryZone}</td><td>${s.stop ? fmt(s.stop) : '–'}</td>
+        <td>${s.tp1 ? fmt(s.tp1) : '–'}</td><td>${s.tp2 ? fmt(s.tp2) : '–'}</td><td>${s.tp3 ? fmt(s.tp3) : '–'}</td>
+        <td><span class="badge ${statusCls}">${statusLabel}</span></td>
+        <td>${s.exitPrice ? fmt(s.exitPrice) : '–'}</td>
+        <td class="${pnlCls}"><b>${pnl}</b></td>
+        <td>${tpDots}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  render();
+  document.querySelectorAll(".filters select, .filters input").forEach(el => el.addEventListener("input", render));
+}
+init();
+</script>
+</body>
+</html>

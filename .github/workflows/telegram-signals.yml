@@ -10,6 +10,9 @@ on:
         description: 'Mode: auto (default), daily, or hourly'
         default: 'auto'
 
+permissions:
+  contents: write
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -36,3 +39,12 @@ jobs:
           MODE: ${{ github.event.inputs.mode || 'auto' }}
         run: node bot/telegram-bot.js
         timeout-minutes: 5
+
+      - name: Publish track record data
+        run: |
+          if [ -f track-record-data.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add track-record-data.json
+            git diff --cached --quiet || git commit -m "Update track record data [skip ci]" && git push
+          fi
