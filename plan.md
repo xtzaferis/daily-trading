@@ -77,12 +77,12 @@ Make the signal bot reliable and professional enough to charge $2/month.
 ---
 
 ## Implementation Order
-1. Multi-target signals (TP1/TP2/TP3) — changes signal format + tracking
-2. Entry zones — changes signal format
-3. Position size calculator — adds info to signal message
-4. Signal expiry — adds expiry logic + notifications
-5. Timeframe conflict filter — prevents confusing signals
-6. Public track record page — new HTML page, needs signal log data
+1. ~~Multi-target signals (TP1/TP2/TP3)~~ — DONE (2026-11-02)
+2. ~~Entry zones~~ — DONE (2026-11-02)
+3. ~~Position size calculator~~ — DONE (2026-11-02)
+4. ~~Signal expiry~~ — DONE (2026-11-02)
+5. ~~Timeframe conflict filter~~ — DONE (2026-11-02)
+6. ~~Public track record page~~ — DONE (2026-11-02)
 
 ## Not in Scope (for now)
 - Paid tier / paywall integration (do manually via private channel invite)
