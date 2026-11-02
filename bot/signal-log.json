@@ -16,7 +16,11 @@
         "Against BTC"
       ],
       "timestamp": "2026-11-01T14:13:17.212Z",
+      "expiresAt": "2026-11-03T14:13:17.212Z",
       "status": "open",
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null
@@ -37,7 +41,11 @@
         "Against BTC"
       ],
       "timestamp": "2026-11-01T14:13:17.215Z",
+      "expiresAt": "2026-11-03T14:13:17.215Z",
       "status": "open",
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null
@@ -58,7 +66,11 @@
         "TF edge weak"
       ],
       "timestamp": "2026-11-01T14:13:17.218Z",
+      "expiresAt": "2026-11-03T14:13:17.218Z",
       "status": "open",
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null
@@ -79,7 +91,11 @@
         "Against BTC"
       ],
       "timestamp": "2026-11-01T14:13:17.221Z",
+      "expiresAt": "2026-11-03T14:13:17.221Z",
       "status": "open",
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null
@@ -100,7 +116,11 @@
         "Against BTC"
       ],
       "timestamp": "2026-11-01T14:13:17.224Z",
+      "expiresAt": "2026-11-03T14:13:17.224Z",
       "status": "open",
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null
