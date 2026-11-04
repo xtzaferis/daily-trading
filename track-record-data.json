@@ -1,13 +1,13 @@
 {
-  "updated": "2026-11-04T06:01:05.847Z",
+  "updated": "2026-11-04T07:01:18.886Z",
   "stats": {
-    "total": 3,
-    "open": 12,
+    "total": 4,
+    "open": 11,
     "wins": 1,
-    "winRate": 33.33333333333333,
-    "totalPnl": 1.145283472972689,
-    "profitFactor": 3.1310862223339773,
-    "avgPnl": 0.381761157657563
+    "winRate": 25,
+    "totalPnl": -0.8752695911615934,
+    "profitFactor": 0.6578265863214267,
+    "avgPnl": -0.21881739779039835
   },
   "signals": [
     {
@@ -109,13 +109,14 @@
       "tp3": 3687.749690983257,
       "entryLo": 3877.985064246238,
       "entryHi": 3909.4549357537617,
-      "status": "open",
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null,
+      "status": "loss",
+      "exitPrice": 3972.394678768809,
+      "exitTime": "2026-11-04T07:01:08.004Z",
+      "pnlPct": -2.0205530641342824,
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
+      "expired": false,
       "cautions": [
         "Against BTC"
       ]
