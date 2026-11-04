@@ -1,13 +1,13 @@
 {
-  "updated": "2026-11-04T17:01:18.799Z",
+  "updated": "2026-11-04T18:01:23.844Z",
   "stats": {
-    "total": 7,
-    "open": 8,
+    "total": 9,
+    "open": 6,
     "wins": 1,
-    "winRate": 14.285714285714285,
-    "totalPnl": -5.686828953257349,
-    "profitFactor": 0.6112989706377845,
-    "avgPnl": -0.8124041361796213
+    "winRate": 11.11111111111111,
+    "totalPnl": -7.874483973154246,
+    "profitFactor": 0.5317822916422749,
+    "avgPnl": -0.8749426636838051
   },
   "signals": [
     {
@@ -136,13 +136,14 @@
       "tp3": 619.6406358444639,
       "entryLo": 705.5815688192869,
       "entryHi": 719.7984311807132,
-      "status": "open",
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null,
+      "status": "loss",
+      "exitPrice": 717.5,
+      "exitTime": "2026-11-04T18:01:13.136Z",
+      "pnlPct": -0.6749077438998646,
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
+      "expired": true,
       "cautions": [
         "Against BTC"
       ]
@@ -161,13 +162,14 @@
       "tp3": 77.69372773784674,
       "entryLo": 93.2438065498737,
       "entryHi": 95.8161934501263,
-      "status": "open",
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null,
+      "status": "loss",
+      "exitPrice": 95.96,
+      "exitTime": "2026-11-04T18:01:13.295Z",
+      "pnlPct": -1.5127472759970302,
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
+      "expired": true,
       "cautions": [
         "Against BTC"
       ]
