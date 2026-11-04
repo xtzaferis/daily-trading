@@ -1,13 +1,13 @@
 {
-  "updated": "2026-11-04T14:01:19.425Z",
+  "updated": "2026-11-04T15:01:22.313Z",
   "stats": {
-    "total": 4,
-    "open": 11,
+    "total": 5,
+    "open": 10,
     "wins": 1,
-    "winRate": 25,
-    "totalPnl": -0.8752695911615934,
-    "profitFactor": 0.6578265863214267,
-    "avgPnl": -0.21881739779039835
+    "winRate": 20,
+    "totalPnl": -6.655607179933765,
+    "profitFactor": 0.20180366425315208,
+    "avgPnl": -1.331121435986753
   },
   "signals": [
     {
@@ -36,10 +36,11 @@
       "confluence": 8,
       "entry": 2255.66,
       "stop": 2386.044762854898,
-      "status": "open",
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null,
+      "status": "loss",
+      "exitPrice": 2386.044762854898,
+      "exitTime": "2026-11-04T15:01:10.799Z",
+      "pnlPct": -5.780337588772171,
+      "expired": false,
       "cautions": [
         "Against BTC"
       ]
@@ -202,7 +203,7 @@
       "grade": "A",
       "confluence": 7,
       "entry": 1.6,
-      "stop": 1.7936216468703972,
+      "stop": 1.6,
       "tp1": 1.406378353129603,
       "tp2": 1.2867201753636976,
       "tp3": 1.0930985284933006,
@@ -212,7 +213,7 @@
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null,
-      "tp1Hit": false,
+      "tp1Hit": true,
       "tp2Hit": false,
       "tp3Hit": false,
       "cautions": []
