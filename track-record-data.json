@@ -1,8 +1,8 @@
 {
-  "updated": "2026-11-04T05:01:13.250Z",
+  "updated": "2026-11-04T06:01:05.847Z",
   "stats": {
     "total": 3,
-    "open": 11,
+    "open": 12,
     "wins": 1,
     "winRate": 33.33333333333333,
     "totalPnl": 1.145283472972689,
@@ -309,6 +309,29 @@
       "tp2Hit": false,
       "tp3Hit": false,
       "expired": true,
+      "cautions": []
+    },
+    {
+      "date": "2026-11-04T06:01:05.845Z",
+      "base": "ENA",
+      "action": "SELL",
+      "tf": "1d",
+      "grade": "A",
+      "confluence": 6,
+      "entry": 0.1748,
+      "stop": 0.20544568557990328,
+      "tp1": 0.1348,
+      "tp2": 0.1252152807317165,
+      "tp3": 0.09456959515181325,
+      "entryLo": 0.16867086288401936,
+      "entryHi": 0.18092913711598066,
+      "status": "open",
+      "exitPrice": null,
+      "exitTime": null,
+      "pnlPct": null,
+      "tp1Hit": false,
+      "tp2Hit": false,
+      "tp3Hit": false,
       "cautions": []
     }
   ]
