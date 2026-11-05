@@ -1,13 +1,13 @@
 {
-  "updated": "2026-11-05T06:01:10.898Z",
+  "updated": "2026-11-05T07:01:19.943Z",
   "stats": {
-    "total": 9,
-    "open": 9,
-    "wins": 1,
-    "winRate": 11.11111111111111,
-    "totalPnl": -7.874483973154246,
-    "profitFactor": 0.5317822916422749,
-    "avgPnl": -0.8749426636838051
+    "total": 10,
+    "open": 8,
+    "wins": 2,
+    "winRate": 20,
+    "totalPnl": -7.687334877708214,
+    "profitFactor": 0.542910198040929,
+    "avgPnl": -0.7687334877708214
   },
   "signals": [
     {
@@ -188,13 +188,14 @@
       "tp3": 1.1303005638582624,
       "entryLo": 1.5668885075521972,
       "entryHi": 1.6391114924478027,
-      "status": "open",
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null,
+      "status": "win",
+      "exitPrice": 1.6,
+      "exitTime": "2026-11-05T07:01:10.792Z",
+      "pnlPct": 0.18714909544603192,
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
+      "expired": true,
       "cautions": []
     },
     {
