@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-05T21:01:21.790Z",
+  "updated": "2026-11-05T22:01:23.128Z",
   "stats": {
     "total": 10,
     "open": 8,
@@ -395,7 +395,7 @@
       "grade": "B",
       "confluence": 4,
       "entry": 1.3052,
-      "stop": 1.3882632527627234,
+      "stop": 1.3052,
       "tp1": 1.2221367472372764,
       "tp2": 1.1708036570299132,
       "tp3": 1.0877404042671897,
@@ -405,7 +405,7 @@
       "exitPrice": null,
       "exitTime": null,
       "pnlPct": null,
-      "tp1Hit": false,
+      "tp1Hit": true,
       "tp2Hit": false,
       "tp3Hit": false,
       "cautions": []
