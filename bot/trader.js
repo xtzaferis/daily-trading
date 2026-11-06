@@ -53,8 +53,8 @@ class OKXTrader {
   }
 
   async getBalance() {
-    const data = await this.api("GET", "/api/v5/account/balance?ccy=USDT");
-    const detail = data[0]?.details?.find(d => d.ccy === "USDT");
+    const data = await this.api("GET", "/api/v5/account/balance?ccy=USDC");
+    const detail = data[0]?.details?.find(d => d.ccy === "USDC");
     return {
       available: detail ? +detail.availBal : 0,
       total: detail ? +detail.eq : 0,
@@ -140,7 +140,7 @@ class OKXTrader {
       return { executed: false, reason: `Already have open position on ${signal.base}` };
     }
 
-    const instId = signal.base + "-USDT-SWAP";
+    const instId = signal.base + "-USDC-SWAP";
     const side = signal.action === "BUY" ? "buy" : "sell";
     const closeSide = side === "buy" ? "sell" : "buy";
     const posSide = signal.action === "BUY" ? "long" : "short";
