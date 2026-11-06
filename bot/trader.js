@@ -1,128 +1,117 @@
-// Binance USDT-M Futures Trader — executes trades based on bot signals
-// Supports testnet and live. Both LONG and SHORT.
+// OKX Perpetual Swap Trader — executes trades based on bot signals
+// Demo mode uses the same API with x-simulated-trading header.
 
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const TESTNET_BASE = "https://testnet.binancefuture.com";
-const LIVE_BASE = "https://fapi.binance.com";
-
+const BASE_URL = "https://www.okx.com";
 const TRADES_FILE = path.join(__dirname, "trades.json");
 const DEFAULT_LEVERAGE = 5;
 
-class BinanceTrader {
+class OKXTrader {
   constructor(opts = {}) {
-    this.apiKey = opts.apiKey || process.env.BINANCE_API_KEY;
-    this.apiSecret = opts.apiSecret || process.env.BINANCE_API_SECRET;
-    this.testnet = opts.testnet !== false;
-    this.base = this.testnet ? TESTNET_BASE : LIVE_BASE;
+    this.apiKey = opts.apiKey || process.env.OKX_API_KEY;
+    this.apiSecret = opts.apiSecret || process.env.OKX_API_SECRET;
+    this.passphrase = opts.passphrase || process.env.OKX_PASSPHRASE;
+    this.demo = opts.demo !== false;
     this.leverage = opts.leverage || +(process.env.LEVERAGE || DEFAULT_LEVERAGE);
     this.riskPct = opts.riskPct || 0.01;
     this.maxPositions = opts.maxPositions || 5;
-    this.enabled = !!(this.apiKey && this.apiSecret);
+    this.enabled = !!(this.apiKey && this.apiSecret && this.passphrase);
   }
 
-  sign(params) {
-    const qs = new URLSearchParams(params).toString();
-    const sig = crypto.createHmac("sha256", this.apiSecret).update(qs).digest("hex");
-    return qs + "&signature=" + sig;
+  sign(timestamp, method, path, body = "") {
+    const msg = timestamp + method + path + body;
+    return crypto.createHmac("sha256", this.apiSecret).update(msg).digest("base64");
   }
 
-  async api(method, endpoint, params = {}) {
-    params.timestamp = Date.now();
-    params.recvWindow = 10000;
-    const signed = this.sign(params);
-    const url = method === "GET"
-      ? `${this.base}${endpoint}?${signed}`
-      : `${this.base}${endpoint}`;
-    const opts = {
-      method,
-      headers: { "X-MBX-APIKEY": this.apiKey, "Content-Type": "application/x-www-form-urlencoded" },
+  async api(method, endpoint, body = null) {
+    const timestamp = new Date().toISOString();
+    const bodyStr = body ? JSON.stringify(body) : "";
+    const signature = this.sign(timestamp, method, endpoint, bodyStr);
+
+    const headers = {
+      "OK-ACCESS-KEY": this.apiKey,
+      "OK-ACCESS-SIGN": signature,
+      "OK-ACCESS-TIMESTAMP": timestamp,
+      "OK-ACCESS-PASSPHRASE": this.passphrase,
+      "Content-Type": "application/json",
     };
-    if (method !== "GET") opts.body = signed;
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    if (!res.ok) throw new Error(`Binance ${res.status}: ${text}`);
-    return JSON.parse(text);
+    if (this.demo) headers["x-simulated-trading"] = "1";
+
+    const opts = { method, headers };
+    if (body) opts.body = bodyStr;
+
+    const res = await fetch(BASE_URL + endpoint, opts);
+    const data = await res.json();
+
+    if (data.code !== "0") {
+      throw new Error(`OKX ${data.code}: ${data.msg || JSON.stringify(data.data)}`);
+    }
+    return data.data;
   }
 
   async getBalance() {
-    const info = await this.api("GET", "/fapi/v2/balance");
-    const usdt = info.find(b => b.asset === "USDT");
-    return usdt ? { available: +usdt.availableBalance, total: +usdt.balance } : { available: 0, total: 0 };
-  }
-
-  async getPrice(symbol) {
-    const data = await this.api("GET", "/fapi/v1/ticker/price", { symbol });
-    return +data.price;
-  }
-
-  async setLeverage(symbol, leverage) {
-    try {
-      await this.api("POST", "/fapi/v1/leverage", { symbol, leverage });
-    } catch (e) {
-      console.log(`[TRADE] Leverage warning for ${symbol}: ${e.message}`);
-    }
-  }
-
-  async getExchangeInfo(symbol) {
-    const url = `${this.base}/fapi/v1/exchangeInfo`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const sym = data.symbols ? data.symbols.find(s => s.symbol === symbol) : null;
-    return sym;
-  }
-
-  parseFilters(info) {
-    const lot = info.filters.find(f => f.filterType === "LOT_SIZE");
-    const price = info.filters.find(f => f.filterType === "PRICE_FILTER");
-    const minNotional = info.filters.find(f => f.filterType === "MIN_NOTIONAL");
+    const data = await this.api("GET", "/api/v5/account/balance?ccy=USDT");
+    const detail = data[0]?.details?.find(d => d.ccy === "USDT");
     return {
-      stepSize: lot ? +lot.stepSize : 0.001,
-      minQty: lot ? +lot.minQty : 0.001,
-      tickSize: price ? +price.tickSize : 0.01,
-      minNotional: minNotional ? +minNotional.notional : 5,
-      pricePrecision: info.pricePrecision || 2,
-      quantityPrecision: info.quantityPrecision || 3,
+      available: detail ? +detail.availBal : 0,
+      total: detail ? +detail.eq : 0,
     };
   }
 
-  formatQty(value, precision) {
-    return (+value.toFixed(precision)).toString();
+  async getPrice(instId) {
+    const res = await fetch(`${BASE_URL}/api/v5/market/ticker?instId=${instId}`);
+    const data = await res.json();
+    return data.data?.[0] ? +data.data[0].last : 0;
   }
 
-  formatPrice(value, precision) {
-    return (+value.toFixed(precision)).toString();
+  async getInstrument(instId) {
+    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=SWAP&instId=${instId}`);
+    const data = await res.json();
+    return data.data?.[0] || null;
   }
 
-  async placeOrder(symbol, side, type, qty, filters, extra = {}) {
-    const params = {
-      symbol,
-      side,
-      type,
-      quantity: this.formatQty(qty, filters.quantityPrecision),
-      ...extra,
-    };
-    return this.api("POST", "/fapi/v1/order", params);
-  }
-
-  async cancelAllOrders(symbol) {
+  async setLeverage(instId, leverage, side) {
     try {
-      return await this.api("DELETE", "/fapi/v1/allOpenOrders", { symbol });
+      await this.api("POST", "/api/v5/account/set-leverage", {
+        instId,
+        lever: String(leverage),
+        mgnMode: "cross",
+      });
     } catch (e) {
-      if (e.message.includes("-2011")) return {};
-      throw e;
+      console.log(`[TRADE] Leverage note for ${instId}: ${e.message}`);
     }
   }
 
-  async getOpenOrders(symbol) {
-    return this.api("GET", "/fapi/v1/openOrders", symbol ? { symbol } : {});
+  async setAccountMode() {
+    try {
+      await this.api("POST", "/api/v5/account/set-position-mode", { posMode: "net_mode" });
+    } catch {}
   }
 
-  async getPositions() {
-    const data = await this.api("GET", "/fapi/v2/positionRisk");
-    return data.filter(p => +p.positionAmt !== 0);
+  formatSz(value, inst) {
+    const lotSz = inst ? +inst.lotSz : 1;
+    const rounded = Math.floor(value / lotSz) * lotSz;
+    const precision = lotSz < 1 ? Math.round(-Math.log10(lotSz)) : 0;
+    return rounded.toFixed(precision);
+  }
+
+  formatPx(value, inst) {
+    const tickSz = inst ? +inst.tickSz : 0.01;
+    const rounded = Math.round(value / tickSz) * tickSz;
+    const precision = tickSz < 1 ? Math.round(-Math.log10(tickSz)) : 0;
+    return rounded.toFixed(precision);
+  }
+
+  async cancelAllOrders(instId) {
+    try {
+      const orders = await this.api("GET", `/api/v5/trade/orders-pending?instId=${instId}&instType=SWAP`);
+      for (const o of orders) {
+        await this.api("POST", "/api/v5/trade/cancel-order", { instId, ordId: o.ordId });
+      }
+    } catch {}
   }
 
   // --- Trade management ---
@@ -137,7 +126,7 @@ class BinanceTrader {
   }
 
   async executeSignal(signal) {
-    if (!this.enabled) return { executed: false, reason: "Trading not configured (missing API keys)" };
+    if (!this.enabled) return { executed: false, reason: "Trading not configured (missing OKX API keys)" };
 
     const trades = this.loadTrades();
     const openPositions = trades.positions.filter(p => p.status === "open");
@@ -151,78 +140,119 @@ class BinanceTrader {
       return { executed: false, reason: `Already have open position on ${signal.base}` };
     }
 
-    const symbol = signal.base + "USDT";
-    const side = signal.action === "BUY" ? "BUY" : "SELL";
-    const closeSide = side === "BUY" ? "SELL" : "BUY";
-    const positionSide = signal.action === "BUY" ? "long" : "short";
+    const instId = signal.base + "-USDT-SWAP";
+    const side = signal.action === "BUY" ? "buy" : "sell";
+    const closeSide = side === "buy" ? "sell" : "buy";
+    const posSide = signal.action === "BUY" ? "long" : "short";
 
     try {
-      const [balance, info] = await Promise.all([
+      await this.setAccountMode();
+
+      const [balance, inst] = await Promise.all([
         this.getBalance(),
-        this.getExchangeInfo(symbol),
+        this.getInstrument(instId),
       ]);
 
-      if (!info) return { executed: false, reason: `Symbol ${symbol} not found on futures` };
-      const filters = this.parseFilters(info);
+      if (!inst) return { executed: false, reason: `Instrument ${instId} not found` };
 
-      await this.setLeverage(symbol, this.leverage);
+      await this.setLeverage(instId, this.leverage, posSide);
 
-      const price = signal.entry || await this.getPrice(symbol);
+      const price = signal.entry || await this.getPrice(instId);
       const stopDist = Math.abs(price - signal.stop);
       if (stopDist <= 0) return { executed: false, reason: "Invalid stop distance" };
 
-      // Position size: risk % of balance, amplified by leverage
+      const ctVal = +inst.ctVal || 1;
       const riskAmount = balance.available * this.riskPct;
-      const qty = riskAmount / stopDist;
-      const notionalValue = qty * price;
+      const rawQty = riskAmount / stopDist;
+      const contracts = Math.floor((rawQty * price) / (ctVal * price / 1)) || 1;
+      const sz = this.formatSz(rawQty / ctVal, inst);
+
+      if (+sz <= 0) return { executed: false, reason: "Position size too small" };
+
+      const notionalValue = +sz * ctVal * price;
       const marginRequired = notionalValue / this.leverage;
 
       if (marginRequired > balance.available) {
         return { executed: false, reason: `Insufficient margin: need $${marginRequired.toFixed(2)}, have $${balance.available.toFixed(2)}` };
       }
 
-      if (notionalValue < filters.minNotional) {
-        return { executed: false, reason: `Order too small: $${notionalValue.toFixed(2)} < min $${filters.minNotional}` };
-      }
+      console.log(`[TRADE] ${side.toUpperCase()} ${instId}: sz=${sz}, notional=$${notionalValue.toFixed(2)}, leverage=${this.leverage}x, stop=${signal.stop}`);
 
       // 1. Market entry
-      console.log(`[TRADE] ${side} ${symbol}: qty=${qty.toFixed(filters.quantityPrecision)}, notional=$${notionalValue.toFixed(2)}, leverage=${this.leverage}x, stop=${signal.stop}`);
-      const entryOrder = await this.placeOrder(symbol, side, "MARKET", qty, filters);
-
-      const filledQty = +entryOrder.executedQty;
-      const avgPrice = +entryOrder.avgPrice || price;
-
-      // 2. Stop-loss (STOP_MARKET)
-      const stopOrder = await this.placeOrder(symbol, closeSide, "STOP_MARKET", filledQty, filters, {
-        stopPrice: this.formatPrice(signal.stop, filters.pricePrecision),
-        closePosition: "false",
-        workingType: "MARK_PRICE",
+      const entryOrder = await this.api("POST", "/api/v5/trade/order", {
+        instId,
+        tdMode: "cross",
+        side,
+        ordType: "market",
+        sz,
       });
 
-      // 3. TP1 limit order (60% of position)
-      let tp1Order = null;
+      const ordId = entryOrder[0]?.ordId;
+      await new Promise(r => setTimeout(r, 500));
+
+      // Get fill details
+      let avgPrice = price;
+      let filledSz = +sz;
+      try {
+        const detail = await this.api("GET", `/api/v5/trade/order?instId=${instId}&ordId=${ordId}`);
+        if (detail[0]) {
+          avgPrice = +detail[0].avgPx || price;
+          filledSz = +detail[0].fillSz || +sz;
+        }
+      } catch {}
+
+      // 2. Stop-loss order
+      let stopOrdId = null;
+      try {
+        const stopResult = await this.api("POST", "/api/v5/trade/order-algo", {
+          instId,
+          tdMode: "cross",
+          side: closeSide,
+          ordType: "conditional",
+          sz: String(filledSz),
+          slTriggerPx: this.formatPx(signal.stop, inst),
+          slOrdPx: "-1",
+          slTriggerPxType: "mark",
+        });
+        stopOrdId = stopResult[0]?.algoId;
+      } catch (e) {
+        console.log(`[TRADE] Stop-loss warning: ${e.message}`);
+      }
+
+      // 3. TP1 order (60%)
+      let tp1AlgoId = null;
       if (signal.tp1) {
-        const tp1Qty = filledQty * 0.6;
-        if (tp1Qty >= filters.minQty) {
-          tp1Order = await this.placeOrder(symbol, closeSide, "TAKE_PROFIT_MARKET", tp1Qty, filters, {
-            stopPrice: this.formatPrice(signal.tp1, filters.pricePrecision),
-            workingType: "MARK_PRICE",
-          });
+        const tp1Sz = this.formatSz(filledSz * 0.6, inst);
+        if (+tp1Sz > 0) {
+          try {
+            const tp1Result = await this.api("POST", "/api/v5/trade/order-algo", {
+              instId,
+              tdMode: "cross",
+              side: closeSide,
+              ordType: "conditional",
+              sz: tp1Sz,
+              tpTriggerPx: this.formatPx(signal.tp1, inst),
+              tpOrdPx: "-1",
+              tpTriggerPxType: "mark",
+            });
+            tp1AlgoId = tp1Result[0]?.algoId;
+          } catch (e) {
+            console.log(`[TRADE] TP1 warning: ${e.message}`);
+          }
         }
       }
 
       const position = {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         base: signal.base,
-        symbol,
-        side: positionSide,
+        instId,
+        side: posSide,
         action: signal.action,
         leverage: this.leverage,
         entryPrice: avgPrice,
-        entryQty: filledQty,
-        remainingQty: filledQty,
+        entrySz: filledSz,
+        remainingSz: filledSz,
         notionalValue,
-        marginUsed: marginRequired,
         stop: signal.stop,
         tp1: signal.tp1 || null,
         tp2: signal.tp2 || null,
@@ -230,15 +260,18 @@ class BinanceTrader {
         tp1Hit: false,
         tp2Hit: false,
         tp3Hit: false,
-        stopOrderId: stopOrder.orderId,
-        tp1OrderId: tp1Order ? tp1Order.orderId : null,
+        stopAlgoId: stopOrdId,
+        tp1AlgoId,
+        tp2AlgoId: null,
+        tp3AlgoId: null,
+        entryOrdId: ordId,
         status: "open",
         signalKey: signal.key || `${signal.base}-${signal.tf}-${signal.action}`,
         tf: signal.tf,
         openedAt: new Date().toISOString(),
         closedAt: null,
         realizedPnl: 0,
-        fills: [{ type: "entry", price: avgPrice, qty: filledQty, time: new Date().toISOString() }],
+        fills: [{ type: "entry", price: avgPrice, sz: filledSz, time: new Date().toISOString() }],
       };
 
       trades.positions.push(position);
@@ -247,7 +280,7 @@ class BinanceTrader {
       return {
         executed: true,
         position,
-        summary: `${side} ${filledQty.toFixed(filters.quantityPrecision)} ${signal.base} @ $${avgPrice.toFixed(2)} | ${this.leverage}x | Stop: $${signal.stop.toFixed(2)} | Risk: $${riskAmount.toFixed(2)}`,
+        summary: `${side.toUpperCase()} ${sz} ${signal.base} @ $${avgPrice.toFixed(2)} | ${this.leverage}x | Stop: $${signal.stop.toFixed(2)} | Risk: $${riskAmount.toFixed(2)}`,
       };
 
     } catch (e) {
@@ -262,155 +295,161 @@ class BinanceTrader {
 
     for (const pos of open) {
       try {
-        const price = await this.getPrice(pos.symbol);
-        const info = await this.getExchangeInfo(pos.symbol);
-        if (!info) continue;
-        const filters = this.parseFilters(info);
-        const closeSide = pos.side === "long" ? "SELL" : "BUY";
+        const inst = await this.getInstrument(pos.instId);
+        if (!inst) continue;
+        const closeSide = pos.side === "long" ? "sell" : "buy";
+        const ctVal = +inst.ctVal || 1;
 
-        // Check if stop was hit (order filled)
-        if (pos.stopOrderId) {
+        // Check algo orders status
+        const checkAlgo = async (algoId) => {
+          if (!algoId) return null;
           try {
-            const stopStatus = await this.api("GET", "/fapi/v1/order", {
-              symbol: pos.symbol,
-              orderId: pos.stopOrderId,
-            });
-            if (stopStatus.status === "FILLED") {
-              await this.cancelAllOrders(pos.symbol);
-              const exitPrice = +stopStatus.avgPrice || price;
-              const pnl = pos.side === "long"
-                ? (exitPrice - pos.entryPrice) * pos.remainingQty
-                : (pos.entryPrice - exitPrice) * pos.remainingQty;
-              pos.realizedPnl += pnl;
-              pos.remainingQty = 0;
-              pos.status = "closed";
-              pos.closedAt = new Date().toISOString();
-              pos.fills.push({ type: "stop", price: exitPrice, qty: +stopStatus.executedQty, time: new Date().toISOString() });
-              notifications.push({ type: "stop_hit", pos, pnl });
-              this.saveTrades(trades);
-              continue;
-            }
-          } catch {}
+            const data = await this.api("GET", `/api/v5/trade/order-algo?algoId=${algoId}&instType=SWAP`);
+            return data[0] || null;
+          } catch {
+            try {
+              const data = await this.api("GET", `/api/v5/trade/orders-algo-history?ordType=conditional&instId=${pos.instId}&state=effective`);
+              return data.find(o => o.algoId === algoId) || null;
+            } catch { return null; }
+          }
+        };
+
+        // Check stop-loss
+        if (pos.stopAlgoId) {
+          const stopStatus = await checkAlgo(pos.stopAlgoId);
+          if (stopStatus && (stopStatus.state === "effective" || stopStatus.state === "filled")) {
+            await this.cancelAllOrders(pos.instId);
+            const price = await this.getPrice(pos.instId);
+            const pnl = pos.side === "long"
+              ? (price - pos.entryPrice) * pos.remainingSz * ctVal
+              : (pos.entryPrice - price) * pos.remainingSz * ctVal;
+            pos.realizedPnl += pnl;
+            pos.remainingSz = 0;
+            pos.status = "closed";
+            pos.closedAt = new Date().toISOString();
+            pos.fills.push({ type: "stop", price, sz: pos.remainingSz, time: new Date().toISOString() });
+            notifications.push({ type: "stop_hit", pos, pnl });
+            this.saveTrades(trades);
+            continue;
+          }
         }
 
         // Check TP1
-        if (!pos.tp1Hit && pos.tp1OrderId) {
-          try {
-            const tp1Status = await this.api("GET", "/fapi/v1/order", {
-              symbol: pos.symbol,
-              orderId: pos.tp1OrderId,
-            });
-            if (tp1Status.status === "FILLED") {
-              pos.tp1Hit = true;
-              const tp1Price = +tp1Status.avgPrice || pos.tp1;
-              const tp1Qty = +tp1Status.executedQty;
-              const pnl = pos.side === "long"
-                ? (tp1Price - pos.entryPrice) * tp1Qty
-                : (pos.entryPrice - tp1Price) * tp1Qty;
-              pos.realizedPnl += pnl;
-              pos.remainingQty -= tp1Qty;
-              pos.fills.push({ type: "tp1", price: tp1Price, qty: tp1Qty, time: new Date().toISOString() });
+        if (!pos.tp1Hit && pos.tp1AlgoId) {
+          const tp1Status = await checkAlgo(pos.tp1AlgoId);
+          if (tp1Status && (tp1Status.state === "effective" || tp1Status.state === "filled")) {
+            pos.tp1Hit = true;
+            const tp1Sz = +this.formatSz(pos.entrySz * 0.6, inst);
+            const price = pos.tp1;
+            const pnl = pos.side === "long"
+              ? (price - pos.entryPrice) * tp1Sz * ctVal
+              : (pos.entryPrice - price) * tp1Sz * ctVal;
+            pos.realizedPnl += pnl;
+            pos.remainingSz -= tp1Sz;
+            pos.fills.push({ type: "tp1", price, sz: tp1Sz, time: new Date().toISOString() });
 
-              // Cancel old stop, place new stop at breakeven
-              await this.cancelAllOrders(pos.symbol);
-              const newStop = await this.placeOrder(pos.symbol, closeSide, "STOP_MARKET", pos.remainingQty, filters, {
-                stopPrice: this.formatPrice(pos.entryPrice, filters.pricePrecision),
-                closePosition: "false",
-                workingType: "MARK_PRICE",
+            // Cancel old stop, place new at breakeven
+            await this.cancelAllOrders(pos.instId);
+            try {
+              const newStop = await this.api("POST", "/api/v5/trade/order-algo", {
+                instId: pos.instId, tdMode: "cross", side: closeSide,
+                ordType: "conditional", sz: String(pos.remainingSz),
+                slTriggerPx: this.formatPx(pos.entryPrice, inst),
+                slOrdPx: "-1", slTriggerPxType: "mark",
               });
-              pos.stopOrderId = newStop.orderId;
-              pos.stop = pos.entryPrice;
+              pos.stopAlgoId = newStop[0]?.algoId;
+            } catch {}
 
-              // Place TP2 (30% of original)
-              if (pos.tp2) {
-                const tp2Qty = pos.entryQty * 0.3;
-                if (tp2Qty >= filters.minQty) {
-                  const tp2Order = await this.placeOrder(pos.symbol, closeSide, "TAKE_PROFIT_MARKET", tp2Qty, filters, {
-                    stopPrice: this.formatPrice(pos.tp2, filters.pricePrecision),
-                    workingType: "MARK_PRICE",
+            // Place TP2
+            if (pos.tp2) {
+              const tp2Sz = this.formatSz(pos.entrySz * 0.3, inst);
+              if (+tp2Sz > 0) {
+                try {
+                  const tp2Result = await this.api("POST", "/api/v5/trade/order-algo", {
+                    instId: pos.instId, tdMode: "cross", side: closeSide,
+                    ordType: "conditional", sz: tp2Sz,
+                    tpTriggerPx: this.formatPx(pos.tp2, inst),
+                    tpOrdPx: "-1", tpTriggerPxType: "mark",
                   });
-                  pos.tp2OrderId = tp2Order.orderId;
-                }
+                  pos.tp2AlgoId = tp2Result[0]?.algoId;
+                } catch {}
               }
-
-              notifications.push({ type: "tp1_hit", pos, price: tp1Price });
-              this.saveTrades(trades);
             }
-          } catch {}
+
+            pos.stop = pos.entryPrice;
+            notifications.push({ type: "tp1_hit", pos, price });
+            this.saveTrades(trades);
+          }
         }
 
         // Check TP2
-        if (pos.tp1Hit && !pos.tp2Hit && pos.tp2OrderId) {
-          try {
-            const tp2Status = await this.api("GET", "/fapi/v1/order", {
-              symbol: pos.symbol,
-              orderId: pos.tp2OrderId,
-            });
-            if (tp2Status.status === "FILLED") {
-              pos.tp2Hit = true;
-              const tp2Price = +tp2Status.avgPrice || pos.tp2;
-              const tp2Qty = +tp2Status.executedQty;
-              const pnl = pos.side === "long"
-                ? (tp2Price - pos.entryPrice) * tp2Qty
-                : (pos.entryPrice - tp2Price) * tp2Qty;
-              pos.realizedPnl += pnl;
-              pos.remainingQty -= tp2Qty;
-              pos.fills.push({ type: "tp2", price: tp2Price, qty: tp2Qty, time: new Date().toISOString() });
+        if (pos.tp1Hit && !pos.tp2Hit && pos.tp2AlgoId) {
+          const tp2Status = await checkAlgo(pos.tp2AlgoId);
+          if (tp2Status && (tp2Status.state === "effective" || tp2Status.state === "filled")) {
+            pos.tp2Hit = true;
+            const tp2Sz = +this.formatSz(pos.entrySz * 0.3, inst);
+            const price = pos.tp2;
+            const pnl = pos.side === "long"
+              ? (price - pos.entryPrice) * tp2Sz * ctVal
+              : (pos.entryPrice - price) * tp2Sz * ctVal;
+            pos.realizedPnl += pnl;
+            pos.remainingSz -= tp2Sz;
+            pos.fills.push({ type: "tp2", price, sz: tp2Sz, time: new Date().toISOString() });
 
-              // Update stop, place TP3 for remaining 10%
-              await this.cancelAllOrders(pos.symbol);
-              if (pos.remainingQty >= filters.minQty) {
-                const newStop = await this.placeOrder(pos.symbol, closeSide, "STOP_MARKET", pos.remainingQty, filters, {
-                  stopPrice: this.formatPrice(pos.entryPrice, filters.pricePrecision),
-                  closePosition: "false",
-                  workingType: "MARK_PRICE",
+            await this.cancelAllOrders(pos.instId);
+            if (pos.remainingSz > 0) {
+              const remSz = this.formatSz(pos.remainingSz, inst);
+              try {
+                const newStop = await this.api("POST", "/api/v5/trade/order-algo", {
+                  instId: pos.instId, tdMode: "cross", side: closeSide,
+                  ordType: "conditional", sz: remSz,
+                  slTriggerPx: this.formatPx(pos.entryPrice, inst),
+                  slOrdPx: "-1", slTriggerPxType: "mark",
                 });
-                pos.stopOrderId = newStop.orderId;
+                pos.stopAlgoId = newStop[0]?.algoId;
+              } catch {}
 
-                if (pos.tp3) {
-                  const tp3Order = await this.placeOrder(pos.symbol, closeSide, "TAKE_PROFIT_MARKET", pos.remainingQty, filters, {
-                    stopPrice: this.formatPrice(pos.tp3, filters.pricePrecision),
-                    workingType: "MARK_PRICE",
+              if (pos.tp3) {
+                try {
+                  const tp3Result = await this.api("POST", "/api/v5/trade/order-algo", {
+                    instId: pos.instId, tdMode: "cross", side: closeSide,
+                    ordType: "conditional", sz: remSz,
+                    tpTriggerPx: this.formatPx(pos.tp3, inst),
+                    tpOrdPx: "-1", tpTriggerPxType: "mark",
                   });
-                  pos.tp3OrderId = tp3Order.orderId;
-                }
+                  pos.tp3AlgoId = tp3Result[0]?.algoId;
+                } catch {}
               }
-
-              notifications.push({ type: "tp2_hit", pos, price: tp2Price });
-              this.saveTrades(trades);
             }
-          } catch {}
+
+            notifications.push({ type: "tp2_hit", pos, price });
+            this.saveTrades(trades);
+          }
         }
 
         // Check TP3
-        if (pos.tp2Hit && !pos.tp3Hit && pos.tp3OrderId) {
-          try {
-            const tp3Status = await this.api("GET", "/fapi/v1/order", {
-              symbol: pos.symbol,
-              orderId: pos.tp3OrderId,
-            });
-            if (tp3Status.status === "FILLED") {
-              pos.tp3Hit = true;
-              const tp3Price = +tp3Status.avgPrice || pos.tp3;
-              const tp3Qty = +tp3Status.executedQty;
-              const pnl = pos.side === "long"
-                ? (tp3Price - pos.entryPrice) * tp3Qty
-                : (pos.entryPrice - tp3Price) * tp3Qty;
-              pos.realizedPnl += pnl;
-              pos.remainingQty = 0;
-              pos.fills.push({ type: "tp3", price: tp3Price, qty: tp3Qty, time: new Date().toISOString() });
+        if (pos.tp2Hit && !pos.tp3Hit && pos.tp3AlgoId) {
+          const tp3Status = await checkAlgo(pos.tp3AlgoId);
+          if (tp3Status && (tp3Status.state === "effective" || tp3Status.state === "filled")) {
+            pos.tp3Hit = true;
+            const price = pos.tp3;
+            const pnl = pos.side === "long"
+              ? (price - pos.entryPrice) * pos.remainingSz * ctVal
+              : (pos.entryPrice - price) * pos.remainingSz * ctVal;
+            pos.realizedPnl += pnl;
+            pos.fills.push({ type: "tp3", price, sz: pos.remainingSz, time: new Date().toISOString() });
+            pos.remainingSz = 0;
 
-              await this.cancelAllOrders(pos.symbol);
-              pos.status = "closed";
-              pos.closedAt = new Date().toISOString();
-              notifications.push({ type: "tp3_hit", pos, price: tp3Price });
-              this.saveTrades(trades);
-            }
-          } catch {}
+            await this.cancelAllOrders(pos.instId);
+            pos.status = "closed";
+            pos.closedAt = new Date().toISOString();
+            notifications.push({ type: "tp3_hit", pos, price });
+            this.saveTrades(trades);
+          }
         }
 
       } catch (e) {
-        console.error(`[TRADE] Error managing ${pos.symbol}:`, e.message);
+        console.error(`[TRADE] Error managing ${pos.instId}:`, e.message);
       }
     }
 
@@ -422,25 +461,27 @@ class BinanceTrader {
     const pos = trades.positions.find(p => p.base === base && p.status === "open");
     if (!pos) return null;
 
-    await this.cancelAllOrders(pos.symbol);
-    const price = await this.getPrice(pos.symbol);
-    const info = await this.getExchangeInfo(pos.symbol);
-    const filters = this.parseFilters(info);
-    const closeSide = pos.side === "long" ? "SELL" : "BUY";
+    await this.cancelAllOrders(pos.instId);
+    const inst = await this.getInstrument(pos.instId);
+    const closeSide = pos.side === "long" ? "sell" : "buy";
+    const price = await this.getPrice(pos.instId);
 
-    if (pos.remainingQty >= filters.minQty) {
-      const closeOrder = await this.placeOrder(pos.symbol, closeSide, "MARKET", pos.remainingQty, filters);
-      const exitPrice = +closeOrder.avgPrice || price;
+    if (pos.remainingSz > 0) {
+      await this.api("POST", "/api/v5/trade/order", {
+        instId: pos.instId, tdMode: "cross", side: closeSide,
+        ordType: "market", sz: this.formatSz(pos.remainingSz, inst),
+      });
+      const ctVal = inst ? +inst.ctVal : 1;
       const pnl = pos.side === "long"
-        ? (exitPrice - pos.entryPrice) * +closeOrder.executedQty
-        : (pos.entryPrice - exitPrice) * +closeOrder.executedQty;
+        ? (price - pos.entryPrice) * pos.remainingSz * ctVal
+        : (pos.entryPrice - price) * pos.remainingSz * ctVal;
       pos.realizedPnl += pnl;
-      pos.fills.push({ type: reason, price: exitPrice, qty: +closeOrder.executedQty, time: new Date().toISOString() });
+      pos.fills.push({ type: reason, price, sz: pos.remainingSz, time: new Date().toISOString() });
     }
 
     pos.status = "closed";
     pos.closedAt = new Date().toISOString();
-    pos.remainingQty = 0;
+    pos.remainingSz = 0;
     this.saveTrades(trades);
     return pos;
   }
@@ -461,4 +502,4 @@ class BinanceTrader {
   }
 }
 
-module.exports = BinanceTrader;
+module.exports = OKXTrader;

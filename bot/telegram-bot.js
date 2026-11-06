@@ -1,6 +1,6 @@
 // Telegram Signal Bot — runs the same analysis as the dashboard
 // and sends BUY/SELL signals to a Telegram channel.
-// Optionally executes spot trades on Binance.
+// Optionally executes futures trades on OKX.
 // Requires Node 18+ (native fetch).
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -11,18 +11,18 @@ if (!BOT_TOKEN || !CHAT_ID) {
   process.exit(1);
 }
 
-const BinanceTrader = require("./trader");
-const trader = new BinanceTrader({
-  testnet: process.env.BINANCE_LIVE !== "true",
+const OKXTrader = require("./trader");
+const trader = new OKXTrader({
+  demo: process.env.OKX_LIVE !== "true",
   leverage: +(process.env.LEVERAGE || 5),
   riskPct: +(process.env.RISK_PCT || 0.01),
   maxPositions: +(process.env.MAX_POSITIONS || 5),
 });
 
 if (trader.enabled) {
-  console.log(`Trading ENABLED (${trader.testnet ? "TESTNET" : "LIVE"}) | ${trader.leverage}x leverage | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
+  console.log(`Trading ENABLED (${trader.demo ? "DEMO" : "LIVE"}) | ${trader.leverage}x leverage | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
 } else {
-  console.log("Trading DISABLED (no BINANCE_API_KEY/SECRET)");
+  console.log("Trading DISABLED (no OKX_API_KEY/SECRET/PASSPHRASE)");
 }
 
 // ---------- configuration ----------
@@ -974,7 +974,7 @@ async function runDaily() {
         key: `${d.base}-1d-${d.action}`,
       });
       if (result.executed) {
-        await sendTelegram(`💰 <b>TRADE OPENED:</b> ${result.summary}\n<i>${trader.testnet ? "⚠️ TESTNET" : "🔴 LIVE"}</i>`);
+        await sendTelegram(`💰 <b>TRADE OPENED:</b> ${result.summary}\n<i>${trader.demo ? "⚠️ DEMO" : "🔴 LIVE"}</i>`);
       } else {
         console.log(`[TRADE] Skipped ${d.base}: ${result.reason}`);
       }
@@ -1048,7 +1048,7 @@ async function runHourly() {
         key: `${sig.base}-${sig.tf}-${sig.action}`,
       });
       if (result.executed) {
-        await sendTelegram(`💰 <b>TRADE OPENED:</b> ${result.summary}\n<i>${trader.testnet ? "⚠️ TESTNET" : "🔴 LIVE"}</i>`);
+        await sendTelegram(`💰 <b>TRADE OPENED:</b> ${result.summary}\n<i>${trader.demo ? "⚠️ DEMO" : "🔴 LIVE"}</i>`);
       } else {
         console.log(`[TRADE] Skipped ${sig.base}: ${result.reason}`);
       }
@@ -1065,7 +1065,7 @@ async function runHourly() {
       const emoji = n.type.includes("tp") ? "🎯" : "🛑";
       const label = n.type.replace("_", " ").toUpperCase();
       const pnlStr = n.pos.realizedPnl >= 0 ? `+$${n.pos.realizedPnl.toFixed(2)}` : `-$${Math.abs(n.pos.realizedPnl).toFixed(2)}`;
-      await sendTelegram(`${emoji} <b>${label}: ${n.pos.base}</b>\nRealized P&L: <b>${pnlStr}</b>\n<i>${trader.testnet ? "TESTNET" : "LIVE"}</i>`);
+      await sendTelegram(`${emoji} <b>${label}: ${n.pos.base}</b>\nRealized P&L: <b>${pnlStr}</b>\n<i>${trader.demo ? "DEMO" : "LIVE"}</i>`);
       await sleep(500);
     }
     if (tradeNotifs.length) console.log(`${tradeNotifs.length} trade event(s)`);
