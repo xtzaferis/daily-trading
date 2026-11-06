@@ -1,4 +1,5 @@
 // Quick test: open and close a tiny BTC position on OKX demo
+const crypto = require("crypto");
 const OKXTrader = require("./trader");
 
 const trader = new OKXTrader({
@@ -16,6 +17,60 @@ const trader = new OKXTrader({
 
   console.log("=== OKX Demo Trade Test ===");
   console.log("Demo mode:", trader.demo);
+  console.log("API Key (first 6):", trader.apiKey.slice(0, 6) + "...");
+  console.log("API Key length:", trader.apiKey.length);
+  console.log("Secret length:", trader.apiSecret.length);
+  console.log("Passphrase length:", trader.passphrase.length);
+
+  // Raw debug request
+  console.log("\n--- Debug: raw API call ---");
+  const timestamp = new Date().toISOString();
+  const method = "GET";
+  const endpoint = "/api/v5/account/balance";
+  const msg = timestamp + method + endpoint;
+  const sign = crypto.createHmac("sha256", trader.apiSecret).update(msg).digest("base64");
+
+  const headers = {
+    "OK-ACCESS-KEY": trader.apiKey,
+    "OK-ACCESS-SIGN": sign,
+    "OK-ACCESS-TIMESTAMP": timestamp,
+    "OK-ACCESS-PASSPHRASE": trader.passphrase,
+    "Content-Type": "application/json",
+    "x-simulated-trading": "1",
+  };
+  console.log("Request URL: https://www.okx.com" + endpoint);
+  console.log("Timestamp:", timestamp);
+
+  const res = await fetch("https://www.okx.com" + endpoint, { method, headers });
+  const data = await res.json();
+  console.log("Response status:", res.status);
+  console.log("Response:", JSON.stringify(data));
+
+  if (data.code !== "0") {
+    // Try without demo header
+    console.log("\n--- Retry without demo header ---");
+    delete headers["x-simulated-trading"];
+    const timestamp2 = new Date().toISOString();
+    const sign2 = crypto.createHmac("sha256", trader.apiSecret).update(timestamp2 + method + endpoint).digest("base64");
+    headers["OK-ACCESS-SIGN"] = sign2;
+    headers["OK-ACCESS-TIMESTAMP"] = timestamp2;
+    const res2 = await fetch("https://www.okx.com" + endpoint, { method, headers });
+    const data2 = await res2.json();
+    console.log("Response without demo header:", JSON.stringify(data2));
+
+    // Try aws.okx.com
+    console.log("\n--- Retry with aws.okx.com ---");
+    headers["x-simulated-trading"] = "1";
+    const timestamp3 = new Date().toISOString();
+    const sign3 = crypto.createHmac("sha256", trader.apiSecret).update(timestamp3 + method + endpoint).digest("base64");
+    headers["OK-ACCESS-SIGN"] = sign3;
+    headers["OK-ACCESS-TIMESTAMP"] = timestamp3;
+    const res3 = await fetch("https://aws.okx.com" + endpoint, { method, headers });
+    const data3 = await res3.json();
+    console.log("Response from aws.okx.com:", JSON.stringify(data3));
+
+    process.exit(1);
+  }
 
   // 1. Check balance
   const bal = await trader.getBalance();
