@@ -51,8 +51,7 @@ jobs:
           OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
           OKX_API_SECRET: ${{ secrets.OKX_API_SECRET }}
           OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
-          OKX_LIVE: ${{ secrets.OKX_LIVE }}
-          RISK_PCT: ${{ secrets.RISK_PCT }}
+          OKX_LIVE: "true"
           MAX_POSITIONS: ${{ secrets.MAX_POSITIONS }}
         run: node bot/telegram-bot.js
         timeout-minutes: 5

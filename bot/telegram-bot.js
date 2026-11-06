@@ -14,7 +14,7 @@ if (!BOT_TOKEN || !CHAT_ID) {
 const OKXTrader = require("./trader");
 const trader = new OKXTrader({
   demo: process.env.OKX_LIVE !== "true",
-  riskPct: +(process.env.RISK_PCT || 0.01),
+  riskPct: +(process.env.RISK_PCT || 0.02),
   maxPositions: +(process.env.MAX_POSITIONS || 5),
 });
 
