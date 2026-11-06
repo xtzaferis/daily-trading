@@ -713,7 +713,7 @@ function logSignal(d, tf) {
 async function checkOutcomes() {
   const log = loadLog();
   const open = log.signals.filter(s => s.status === "open");
-  if (!open.length) return [];
+  if (!open.length) return { closed: [], tpNotifications: [] };
 
   const results = [];
   const tpNotifications = [];
