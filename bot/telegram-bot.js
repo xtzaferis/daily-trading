@@ -1,5 +1,6 @@
 // Telegram Signal Bot — runs the same analysis as the dashboard
 // and sends BUY/SELL signals to a Telegram channel.
+// Optionally executes spot trades on Binance.
 // Requires Node 18+ (native fetch).
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -8,6 +9,19 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 if (!BOT_TOKEN || !CHAT_ID) {
   console.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID env vars");
   process.exit(1);
+}
+
+const BinanceTrader = require("./trader");
+const trader = new BinanceTrader({
+  testnet: process.env.BINANCE_LIVE !== "true",
+  riskPct: +(process.env.RISK_PCT || 0.01),
+  maxPositions: +(process.env.MAX_POSITIONS || 5),
+});
+
+if (trader.enabled) {
+  console.log(`Trading ENABLED (${trader.testnet ? "TESTNET" : "LIVE"}) | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
+} else {
+  console.log("Trading DISABLED (no BINANCE_API_KEY/SECRET)");
 }
 
 // ---------- configuration ----------
@@ -948,8 +962,23 @@ async function runDaily() {
 
   await sendTelegram(`\u{1F4CB} <i>Updates to these signals will be sent during the day.\nFull dashboard:</i> https://xtzaferis.github.io/daily-trading/\n\n<i>Not financial advice. DYOR.</i>`);
 
-  // Log signals for outcome tracking
-  for (const d of actionable) logSignal(d, "1d");
+  // Log signals and execute trades for clean BUY signals
+  for (const d of actionable) {
+    logSignal(d, "1d");
+    if (trader.enabled && d.action === "BUY" && (!d.cautions || d.cautions.length === 0)) {
+      const result = await trader.executeSignal({
+        base: d.base, action: d.action, tf: "1d",
+        entry: d.plan.entry, stop: d.plan.stop,
+        tp1: d.rr?.tp1?.price, tp2: d.rr?.tp2?.price, tp3: d.rr?.tp3?.price,
+        key: `${d.base}-1d-${d.action}`,
+      });
+      if (result.executed) {
+        await sendTelegram(`💰 <b>TRADE OPENED:</b> ${result.summary}\n<i>${trader.testnet ? "⚠️ TESTNET" : "🔴 LIVE"}</i>`);
+      } else {
+        console.log(`[TRADE] Skipped ${d.base}: ${result.reason}`);
+      }
+    }
+  }
 
   saveDailyState(actionable);
   console.log(`Sent ${actionable.length} daily signals, state saved.`);
@@ -1010,9 +1039,36 @@ async function runHourly() {
   for (const sig of clean) {
     await sendTelegram(formatSignal(sig, sig.tf));
     logSignal(sig, sig.tf);
+    if (trader.enabled && sig.action === "BUY") {
+      const result = await trader.executeSignal({
+        base: sig.base, action: sig.action, tf: sig.tf,
+        entry: sig.plan.entry, stop: sig.plan.stop,
+        tp1: sig.rr?.tp1?.price, tp2: sig.rr?.tp2?.price, tp3: sig.rr?.tp3?.price,
+        key: `${sig.base}-${sig.tf}-${sig.action}`,
+      });
+      if (result.executed) {
+        await sendTelegram(`💰 <b>TRADE OPENED:</b> ${result.summary}\n<i>${trader.testnet ? "⚠️ TESTNET" : "🔴 LIVE"}</i>`);
+      } else {
+        console.log(`[TRADE] Skipped ${sig.base}: ${result.reason}`);
+      }
+    }
     await sleep(500);
   }
   if (clean.length) console.log(`Sent ${clean.length} clean signal(s)`);
+
+  // Manage live trades (check TP/stop fills on Binance)
+  if (trader.enabled) {
+    console.log("Checking live trade positions...");
+    const tradeNotifs = await trader.managePositions();
+    for (const n of tradeNotifs) {
+      const emoji = n.type.includes("tp") ? "🎯" : "🛑";
+      const label = n.type.replace("_", " ").toUpperCase();
+      const pnlStr = n.pos.realizedPnl >= 0 ? `+$${n.pos.realizedPnl.toFixed(2)}` : `-$${Math.abs(n.pos.realizedPnl).toFixed(2)}`;
+      await sendTelegram(`${emoji} <b>${label}: ${n.pos.base}</b>\nRealized P&L: <b>${pnlStr}</b>\n<i>${trader.testnet ? "TESTNET" : "LIVE"}</i>`);
+      await sleep(500);
+    }
+    if (tradeNotifs.length) console.log(`${tradeNotifs.length} trade event(s)`);
+  }
 
   // Check outcomes for all open signals
   console.log("Checking open signal outcomes...");

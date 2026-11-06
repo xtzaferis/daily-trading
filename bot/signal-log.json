@@ -17,13 +17,14 @@
       ],
       "timestamp": "2026-11-01T14:13:17.212Z",
       "expiresAt": "2026-11-03T14:13:17.212Z",
-      "status": "open",
+      "status": "win",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 0.07301,
+      "exitTime": "2026-11-06T16:50:40.602Z",
+      "pnlPct": 3.4642337696681174,
+      "expired": true
     },
     {
       "key": "ETH-1d-SELL",
@@ -42,13 +43,14 @@
       ],
       "timestamp": "2026-11-01T14:13:17.215Z",
       "expiresAt": "2026-11-03T14:13:17.215Z",
-      "status": "open",
+      "status": "loss",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 2386.044762854898,
+      "exitTime": "2026-11-06T16:50:40.878Z",
+      "pnlPct": -5.780337588772171,
+      "expired": false
     },
     {
       "key": "ZEC-1d-BUY",
@@ -67,13 +69,14 @@
       ],
       "timestamp": "2026-11-01T14:13:17.218Z",
       "expiresAt": "2026-11-03T14:13:17.218Z",
-      "status": "open",
+      "status": "win",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 1358.72,
+      "exitTime": "2026-11-06T16:50:41.145Z",
+      "pnlPct": 8.574259641047766,
+      "expired": true
     },
     {
       "key": "AVAX-1d-SELL",
@@ -92,13 +95,14 @@
       ],
       "timestamp": "2026-11-01T14:13:17.221Z",
       "expiresAt": "2026-11-03T14:13:17.221Z",
-      "status": "open",
+      "status": "win",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 8.4,
+      "exitTime": "2026-11-06T16:50:41.411Z",
+      "pnlPct": 2.086490266930881,
+      "expired": true
     },
     {
       "key": "SUI-1d-SELL",
@@ -117,13 +121,14 @@
       ],
       "timestamp": "2026-11-01T14:13:17.224Z",
       "expiresAt": "2026-11-03T14:13:17.224Z",
-      "status": "open",
+      "status": "win",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 0.8735,
+      "exitTime": "2026-11-06T16:50:41.675Z",
+      "pnlPct": 2.8796975761618775,
+      "expired": true
     },
     {
       "key": "XAUT-1d-SELL",
@@ -147,13 +152,14 @@
       ],
       "timestamp": "2026-11-02T17:37:08.853Z",
       "expiresAt": "2026-11-04T17:37:08.853Z",
-      "status": "open",
+      "status": "loss",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 3972.394678768809,
+      "exitTime": "2026-11-06T16:50:41.943Z",
+      "pnlPct": -2.0205530641342824,
+      "expired": false
     },
     {
       "key": "BNB-1d-SELL",
@@ -177,13 +183,14 @@
       ],
       "timestamp": "2026-11-02T17:37:08.860Z",
       "expiresAt": "2026-11-04T17:37:08.860Z",
-      "status": "open",
+      "status": "win",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 696.36,
+      "exitTime": "2026-11-06T16:50:42.208Z",
+      "pnlPct": 2.2913188062130856,
+      "expired": true
     },
     {
       "key": "SOL-1d-SELL",
@@ -207,13 +214,14 @@
       ],
       "timestamp": "2026-11-02T17:37:08.864Z",
       "expiresAt": "2026-11-04T17:37:08.864Z",
-      "status": "open",
+      "status": "win",
       "tp1Hit": false,
       "tp2Hit": false,
       "tp3Hit": false,
-      "exitPrice": null,
-      "exitTime": null,
-      "pnlPct": null
+      "exitPrice": 90.49,
+      "exitTime": "2026-11-06T16:50:42.471Z",
+      "pnlPct": 4.2737755209986314,
+      "expired": true
     }
   ]
 }

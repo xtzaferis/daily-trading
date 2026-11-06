@@ -29,6 +29,7 @@ jobs:
           path: |
             bot/daily-state.json
             bot/signal-log.json
+            bot/trades.json
           key: bot-state-${{ github.run_id }}
           restore-keys: bot-state-
 
@@ -37,6 +38,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MODE: ${{ github.event.inputs.mode || 'auto' }}
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+          BINANCE_LIVE: ${{ secrets.BINANCE_LIVE }}
+          RISK_PCT: ${{ secrets.RISK_PCT }}
+          MAX_POSITIONS: ${{ secrets.MAX_POSITIONS }}
         run: node bot/telegram-bot.js
         timeout-minutes: 5
 
