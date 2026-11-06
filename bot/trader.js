@@ -53,11 +53,14 @@ class OKXTrader {
   }
 
   async getBalance() {
-    const data = await this.api("GET", "/api/v5/account/balance?ccy=USDC");
-    const detail = data[0]?.details?.find(d => d.ccy === "USDC");
+    const data = await this.api("GET", "/api/v5/account/balance");
+    const usd = data[0]?.details?.find(d => d.ccy === "USD");
+    const usdc = data[0]?.details?.find(d => d.ccy === "USDC");
+    const best = usd && +usd.availBal > 0 ? usd : usdc;
     return {
-      available: detail ? +detail.availBal : 0,
-      total: detail ? +detail.eq : 0,
+      available: best ? +best.availBal : 0,
+      total: best ? +best.eq : 0,
+      ccy: best?.ccy || "USD",
     };
   }
 
@@ -67,8 +70,16 @@ class OKXTrader {
     return data.data?.[0] ? +data.data[0].last : 0;
   }
 
+  async resolveInstId(base) {
+    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=FUTURES`);
+    const data = await res.json();
+    const xperp = data.data?.find(d => d.instId.startsWith(`${base}-USD_UM_XPERP-`));
+    return xperp || null;
+  }
+
   async getInstrument(instId) {
-    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=SWAP&instId=${instId}`);
+    const instType = instId.includes("XPERP") ? "FUTURES" : "SWAP";
+    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=${instType}&instId=${instId}`);
     const data = await res.json();
     return data.data?.[0] || null;
   }
@@ -106,10 +117,17 @@ class OKXTrader {
   }
 
   async cancelAllOrders(instId) {
+    const instType = instId.includes("XPERP") ? "FUTURES" : "SWAP";
     try {
-      const orders = await this.api("GET", `/api/v5/trade/orders-pending?instId=${instId}&instType=SWAP`);
+      const orders = await this.api("GET", `/api/v5/trade/orders-pending?instId=${instId}&instType=${instType}`);
       for (const o of orders) {
         await this.api("POST", "/api/v5/trade/cancel-order", { instId, ordId: o.ordId });
+      }
+    } catch {}
+    try {
+      const algos = await this.api("GET", `/api/v5/trade/orders-algo-pending?instId=${instId}&instType=${instType}&ordType=conditional`);
+      for (const a of algos) {
+        await this.api("POST", "/api/v5/trade/cancel-algos", { instId, algoId: a.algoId });
       }
     } catch {}
   }
@@ -140,7 +158,6 @@ class OKXTrader {
       return { executed: false, reason: `Already have open position on ${signal.base}` };
     }
 
-    const instId = signal.base + "-USDC-SWAP";
     const side = signal.action === "BUY" ? "buy" : "sell";
     const closeSide = side === "buy" ? "sell" : "buy";
     const posSide = signal.action === "BUY" ? "long" : "short";
@@ -150,10 +167,11 @@ class OKXTrader {
 
       const [balance, inst] = await Promise.all([
         this.getBalance(),
-        this.getInstrument(instId),
+        this.resolveInstId(signal.base),
       ]);
 
-      if (!inst) return { executed: false, reason: `Instrument ${instId} not found` };
+      if (!inst) return { executed: false, reason: `No X-Perp instrument found for ${signal.base}` };
+      const instId = inst.instId;
 
       await this.setLeverage(instId, this.leverage, posSide);
 
@@ -164,8 +182,8 @@ class OKXTrader {
       const ctVal = +inst.ctVal || 1;
       const riskAmount = balance.available * this.riskPct;
       const rawQty = riskAmount / stopDist;
-      const contracts = Math.floor((rawQty * price) / (ctVal * price / 1)) || 1;
-      const sz = this.formatSz(rawQty / ctVal, inst);
+      const contractsNeeded = rawQty / ctVal;
+      const sz = this.formatSz(contractsNeeded, inst);
 
       if (+sz <= 0) return { executed: false, reason: "Position size too small" };
 
@@ -301,10 +319,11 @@ class OKXTrader {
         const ctVal = +inst.ctVal || 1;
 
         // Check algo orders status
+        const algoInstType = pos.instId.includes("XPERP") ? "FUTURES" : "SWAP";
         const checkAlgo = async (algoId) => {
           if (!algoId) return null;
           try {
-            const data = await this.api("GET", `/api/v5/trade/order-algo?algoId=${algoId}&instType=SWAP`);
+            const data = await this.api("GET", `/api/v5/trade/order-algo?algoId=${algoId}&instType=${algoInstType}`);
             return data[0] || null;
           } catch {
             try {
