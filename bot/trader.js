@@ -8,6 +8,12 @@ const path = require("path");
 const BASE_URL = process.env.OKX_BASE_URL || "https://eea.okx.com";
 const TRADES_FILE = path.join(__dirname, "trades.json");
 
+const SYMBOL_MAP = { RNDR: "RENDER", MKR: "SKY" };
+const OKX_BLACKLIST = new Set([
+  "XAUT", "POPCAT", "BRETT", "ACT", "SPX", "FARTCOIN", "AI16Z",
+  "MOG", "CHILLGUY", "1000SATS", "MUBARAK", "BANANAS31", "TST", "CHEEMS",
+]);
+
 class OKXTrader {
   constructor(opts = {}) {
     this.apiKey = opts.apiKey || process.env.OKX_API_KEY;
@@ -113,7 +119,11 @@ class OKXTrader {
       return { executed: false, reason: "Spot trading: SELL (short) signals skipped" };
     }
 
-    const instId = signal.base + "-USDC";
+    const base = SYMBOL_MAP[signal.base] || signal.base;
+    if (OKX_BLACKLIST.has(signal.base)) {
+      return { executed: false, reason: `${signal.base} not available on OKX EEA` };
+    }
+    const instId = base + "-USDC";
 
     try {
       const [balance, inst] = await Promise.all([
