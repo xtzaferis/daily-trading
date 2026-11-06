@@ -1,13 +1,12 @@
-// OKX Perpetual Swap Trader — executes trades based on bot signals
-// Demo mode uses the same API with x-simulated-trading header.
+// OKX EEA Spot Trader — executes trades based on bot signals
+// Uses USDC pairs (MiCA-compliant) on OKX Europe demo/live.
 
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const BASE_URL = "https://www.okx.com";
+const BASE_URL = process.env.OKX_BASE_URL || "https://eea.okx.com";
 const TRADES_FILE = path.join(__dirname, "trades.json");
-const DEFAULT_LEVERAGE = 5;
 
 class OKXTrader {
   constructor(opts = {}) {
@@ -15,7 +14,6 @@ class OKXTrader {
     this.apiSecret = opts.apiSecret || process.env.OKX_API_SECRET;
     this.passphrase = opts.passphrase || process.env.OKX_PASSPHRASE;
     this.demo = opts.demo !== false;
-    this.leverage = opts.leverage || +(process.env.LEVERAGE || DEFAULT_LEVERAGE);
     this.riskPct = opts.riskPct || 0.01;
     this.maxPositions = opts.maxPositions || 5;
     this.enabled = !!(this.apiKey && this.apiSecret && this.passphrase);
@@ -47,20 +45,20 @@ class OKXTrader {
     const data = await res.json();
 
     if (data.code !== "0") {
-      throw new Error(`OKX ${data.code}: ${data.msg || JSON.stringify(data.data)}`);
+      throw new Error(`OKX ${data.code}: ${data.msg || data.data?.[0]?.sMsg || JSON.stringify(data.data)}`);
     }
     return data.data;
   }
 
   async getBalance() {
     const data = await this.api("GET", "/api/v5/account/balance");
-    const usd = data[0]?.details?.find(d => d.ccy === "USD");
     const usdc = data[0]?.details?.find(d => d.ccy === "USDC");
-    const best = usd && +usd.availBal > 0 ? usd : usdc;
+    const usd = data[0]?.details?.find(d => d.ccy === "USD");
+    const best = usdc && +usdc.availBal > 0 ? usdc : usd;
     return {
       available: best ? +best.availBal : 0,
       total: best ? +best.eq : 0,
-      ccy: best?.ccy || "USD",
+      ccy: best?.ccy || "USDC",
     };
   }
 
@@ -70,66 +68,10 @@ class OKXTrader {
     return data.data?.[0] ? +data.data[0].last : 0;
   }
 
-  async resolveInstId(base) {
-    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=FUTURES`);
-    const data = await res.json();
-    const xperp = data.data?.find(d => d.instId.startsWith(`${base}-USD_UM_XPERP-`));
-    return xperp || null;
-  }
-
   async getInstrument(instId) {
-    const instType = instId.includes("XPERP") ? "FUTURES" : "SWAP";
-    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=${instType}&instId=${instId}`);
+    const res = await fetch(`${BASE_URL}/api/v5/public/instruments?instType=SPOT&instId=${instId}`);
     const data = await res.json();
     return data.data?.[0] || null;
-  }
-
-  async setLeverage(instId, leverage, side) {
-    try {
-      await this.api("POST", "/api/v5/account/set-leverage", {
-        instId,
-        lever: String(leverage),
-        mgnMode: "cross",
-      });
-    } catch (e) {
-      console.log(`[TRADE] Leverage note for ${instId}: ${e.message}`);
-    }
-  }
-
-  async setAccountMode() {
-    try {
-      await this.api("POST", "/api/v5/account/set-position-mode", { posMode: "net_mode" });
-    } catch {}
-  }
-
-  formatSz(value, inst) {
-    const lotSz = inst ? +inst.lotSz : 1;
-    const rounded = Math.floor(value / lotSz) * lotSz;
-    const precision = lotSz < 1 ? Math.round(-Math.log10(lotSz)) : 0;
-    return rounded.toFixed(precision);
-  }
-
-  formatPx(value, inst) {
-    const tickSz = inst ? +inst.tickSz : 0.01;
-    const rounded = Math.round(value / tickSz) * tickSz;
-    const precision = tickSz < 1 ? Math.round(-Math.log10(tickSz)) : 0;
-    return rounded.toFixed(precision);
-  }
-
-  async cancelAllOrders(instId) {
-    const instType = instId.includes("XPERP") ? "FUTURES" : "SWAP";
-    try {
-      const orders = await this.api("GET", `/api/v5/trade/orders-pending?instId=${instId}&instType=${instType}`);
-      for (const o of orders) {
-        await this.api("POST", "/api/v5/trade/cancel-order", { instId, ordId: o.ordId });
-      }
-    } catch {}
-    try {
-      const algos = await this.api("GET", `/api/v5/trade/orders-algo-pending?instId=${instId}&instType=${instType}&ordType=conditional`);
-      for (const a of algos) {
-        await this.api("POST", "/api/v5/trade/cancel-algos", { instId, algoId: a.algoId });
-      }
-    } catch {}
   }
 
   // --- Trade management ---
@@ -158,57 +100,53 @@ class OKXTrader {
       return { executed: false, reason: `Already have open position on ${signal.base}` };
     }
 
-    const side = signal.action === "BUY" ? "buy" : "sell";
-    const closeSide = side === "buy" ? "sell" : "buy";
-    const posSide = signal.action === "BUY" ? "long" : "short";
+    if (signal.action === "SELL") {
+      return { executed: false, reason: "Spot trading: SELL (short) signals skipped" };
+    }
+
+    const instId = signal.base + "-USDC";
 
     try {
-      await this.setAccountMode();
-
       const [balance, inst] = await Promise.all([
         this.getBalance(),
-        this.resolveInstId(signal.base),
+        this.getInstrument(instId),
       ]);
 
-      if (!inst) return { executed: false, reason: `No X-Perp instrument found for ${signal.base}` };
-      const instId = inst.instId;
-
-      await this.setLeverage(instId, this.leverage, posSide);
+      if (!inst) return { executed: false, reason: `Instrument ${instId} not found` };
 
       const price = signal.entry || await this.getPrice(instId);
       const stopDist = Math.abs(price - signal.stop);
       if (stopDist <= 0) return { executed: false, reason: "Invalid stop distance" };
 
-      const ctVal = +inst.ctVal || 1;
       const riskAmount = balance.available * this.riskPct;
-      const rawQty = riskAmount / stopDist;
-      const contractsNeeded = rawQty / ctVal;
-      const sz = this.formatSz(contractsNeeded, inst);
+      const qty = riskAmount / stopDist;
+      const minSz = +inst.minSz || 0.0001;
+      const lotSz = +inst.lotSz || 0.0001;
+      const roundedQty = Math.floor(qty / lotSz) * lotSz;
+      const precision = lotSz < 1 ? Math.round(-Math.log10(lotSz)) : 0;
+      const sz = roundedQty.toFixed(precision);
 
-      if (+sz <= 0) return { executed: false, reason: "Position size too small" };
+      if (+sz < minSz) return { executed: false, reason: `Position size ${sz} below minimum ${minSz}` };
 
-      const notionalValue = +sz * ctVal * price;
-      const marginRequired = notionalValue / this.leverage;
-
-      if (marginRequired > balance.available) {
-        return { executed: false, reason: `Insufficient margin: need $${marginRequired.toFixed(2)}, have $${balance.available.toFixed(2)}` };
+      const notionalValue = +sz * price;
+      if (notionalValue > balance.available) {
+        return { executed: false, reason: `Insufficient balance: need $${notionalValue.toFixed(2)}, have $${balance.available.toFixed(2)}` };
       }
 
-      console.log(`[TRADE] ${side.toUpperCase()} ${instId}: sz=${sz}, notional=$${notionalValue.toFixed(2)}, leverage=${this.leverage}x, stop=${signal.stop}`);
+      console.log(`[TRADE] BUY ${instId}: sz=${sz}, cost=$${notionalValue.toFixed(2)}, stop=$${signal.stop}`);
 
-      // 1. Market entry
       const entryOrder = await this.api("POST", "/api/v5/trade/order", {
         instId,
-        tdMode: "cross",
-        side,
+        tdMode: "cash",
+        side: "buy",
         ordType: "market",
         sz,
+        tgtCcy: "base_ccy",
       });
 
       const ordId = entryOrder[0]?.ordId;
       await new Promise(r => setTimeout(r, 500));
 
-      // Get fill details
       let avgPrice = price;
       let filledSz = +sz;
       try {
@@ -219,54 +157,12 @@ class OKXTrader {
         }
       } catch {}
 
-      // 2. Stop-loss order
-      let stopOrdId = null;
-      try {
-        const stopResult = await this.api("POST", "/api/v5/trade/order-algo", {
-          instId,
-          tdMode: "cross",
-          side: closeSide,
-          ordType: "conditional",
-          sz: String(filledSz),
-          slTriggerPx: this.formatPx(signal.stop, inst),
-          slOrdPx: "-1",
-          slTriggerPxType: "mark",
-        });
-        stopOrdId = stopResult[0]?.algoId;
-      } catch (e) {
-        console.log(`[TRADE] Stop-loss warning: ${e.message}`);
-      }
-
-      // 3. TP1 order (60%)
-      let tp1AlgoId = null;
-      if (signal.tp1) {
-        const tp1Sz = this.formatSz(filledSz * 0.6, inst);
-        if (+tp1Sz > 0) {
-          try {
-            const tp1Result = await this.api("POST", "/api/v5/trade/order-algo", {
-              instId,
-              tdMode: "cross",
-              side: closeSide,
-              ordType: "conditional",
-              sz: tp1Sz,
-              tpTriggerPx: this.formatPx(signal.tp1, inst),
-              tpOrdPx: "-1",
-              tpTriggerPxType: "mark",
-            });
-            tp1AlgoId = tp1Result[0]?.algoId;
-          } catch (e) {
-            console.log(`[TRADE] TP1 warning: ${e.message}`);
-          }
-        }
-      }
-
       const position = {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         base: signal.base,
         instId,
-        side: posSide,
-        action: signal.action,
-        leverage: this.leverage,
+        side: "long",
+        action: "BUY",
         entryPrice: avgPrice,
         entrySz: filledSz,
         remainingSz: filledSz,
@@ -278,10 +174,6 @@ class OKXTrader {
         tp1Hit: false,
         tp2Hit: false,
         tp3Hit: false,
-        stopAlgoId: stopOrdId,
-        tp1AlgoId,
-        tp2AlgoId: null,
-        tp3AlgoId: null,
         entryOrdId: ordId,
         status: "open",
         signalKey: signal.key || `${signal.base}-${signal.tf}-${signal.action}`,
@@ -298,7 +190,7 @@ class OKXTrader {
       return {
         executed: true,
         position,
-        summary: `${side.toUpperCase()} ${sz} ${signal.base} @ $${avgPrice.toFixed(2)} | ${this.leverage}x | Stop: $${signal.stop.toFixed(2)} | Risk: $${riskAmount.toFixed(2)}`,
+        summary: `BUY ${sz} ${signal.base} @ $${avgPrice.toFixed(2)} | Cost: $${notionalValue.toFixed(2)} | Stop: $${signal.stop.toFixed(2)}`,
       };
 
     } catch (e) {
@@ -313,157 +205,86 @@ class OKXTrader {
 
     for (const pos of open) {
       try {
-        const inst = await this.getInstrument(pos.instId);
-        if (!inst) continue;
-        const closeSide = pos.side === "long" ? "sell" : "buy";
-        const ctVal = +inst.ctVal || 1;
-
-        // Check algo orders status
-        const algoInstType = pos.instId.includes("XPERP") ? "FUTURES" : "SWAP";
-        const checkAlgo = async (algoId) => {
-          if (!algoId) return null;
-          try {
-            const data = await this.api("GET", `/api/v5/trade/order-algo?algoId=${algoId}&instType=${algoInstType}`);
-            return data[0] || null;
-          } catch {
-            try {
-              const data = await this.api("GET", `/api/v5/trade/orders-algo-history?ordType=conditional&instId=${pos.instId}&state=effective`);
-              return data.find(o => o.algoId === algoId) || null;
-            } catch { return null; }
-          }
-        };
+        const price = await this.getPrice(pos.instId);
+        if (!price) continue;
 
         // Check stop-loss
-        if (pos.stopAlgoId) {
-          const stopStatus = await checkAlgo(pos.stopAlgoId);
-          if (stopStatus && (stopStatus.state === "effective" || stopStatus.state === "filled")) {
-            await this.cancelAllOrders(pos.instId);
-            const price = await this.getPrice(pos.instId);
-            const pnl = pos.side === "long"
-              ? (price - pos.entryPrice) * pos.remainingSz * ctVal
-              : (pos.entryPrice - price) * pos.remainingSz * ctVal;
-            pos.realizedPnl += pnl;
-            pos.remainingSz = 0;
-            pos.status = "closed";
-            pos.closedAt = new Date().toISOString();
-            pos.fills.push({ type: "stop", price, sz: pos.remainingSz, time: new Date().toISOString() });
-            notifications.push({ type: "stop_hit", pos, pnl });
-            this.saveTrades(trades);
-            continue;
+        if (price <= pos.stop) {
+          const closed = await this.closePosition(pos.base, "stop");
+          if (closed) {
+            notifications.push({ type: "stop_hit", pos: closed, pnl: closed.realizedPnl });
           }
+          continue;
         }
 
-        // Check TP1
-        if (!pos.tp1Hit && pos.tp1AlgoId) {
-          const tp1Status = await checkAlgo(pos.tp1AlgoId);
-          if (tp1Status && (tp1Status.state === "effective" || tp1Status.state === "filled")) {
-            pos.tp1Hit = true;
-            const tp1Sz = +this.formatSz(pos.entrySz * 0.6, inst);
-            const price = pos.tp1;
-            const pnl = pos.side === "long"
-              ? (price - pos.entryPrice) * tp1Sz * ctVal
-              : (pos.entryPrice - price) * tp1Sz * ctVal;
-            pos.realizedPnl += pnl;
-            pos.remainingSz -= tp1Sz;
-            pos.fills.push({ type: "tp1", price, sz: tp1Sz, time: new Date().toISOString() });
+        // Check TP1 (sell 60%)
+        if (!pos.tp1Hit && pos.tp1 && price >= pos.tp1) {
+          const inst = await this.getInstrument(pos.instId);
+          const lotSz = inst ? +inst.lotSz : 0.0001;
+          const tp1Qty = Math.floor((pos.entrySz * 0.6) / lotSz) * lotSz;
+          const precision = lotSz < 1 ? Math.round(-Math.log10(lotSz)) : 0;
+          const tp1Sz = tp1Qty.toFixed(precision);
 
-            // Cancel old stop, place new at breakeven
-            await this.cancelAllOrders(pos.instId);
+          if (+tp1Sz > 0) {
             try {
-              const newStop = await this.api("POST", "/api/v5/trade/order-algo", {
-                instId: pos.instId, tdMode: "cross", side: closeSide,
-                ordType: "conditional", sz: String(pos.remainingSz),
-                slTriggerPx: this.formatPx(pos.entryPrice, inst),
-                slOrdPx: "-1", slTriggerPxType: "mark",
+              await this.api("POST", "/api/v5/trade/order", {
+                instId: pos.instId, tdMode: "cash", side: "sell", ordType: "market",
+                sz: tp1Sz, tgtCcy: "base_ccy",
               });
-              pos.stopAlgoId = newStop[0]?.algoId;
-            } catch {}
-
-            // Place TP2
-            if (pos.tp2) {
-              const tp2Sz = this.formatSz(pos.entrySz * 0.3, inst);
-              if (+tp2Sz > 0) {
-                try {
-                  const tp2Result = await this.api("POST", "/api/v5/trade/order-algo", {
-                    instId: pos.instId, tdMode: "cross", side: closeSide,
-                    ordType: "conditional", sz: tp2Sz,
-                    tpTriggerPx: this.formatPx(pos.tp2, inst),
-                    tpOrdPx: "-1", tpTriggerPxType: "mark",
-                  });
-                  pos.tp2AlgoId = tp2Result[0]?.algoId;
-                } catch {}
-              }
+              const pnl = (price - pos.entryPrice) * +tp1Sz;
+              pos.tp1Hit = true;
+              pos.remainingSz -= +tp1Sz;
+              pos.realizedPnl += pnl;
+              pos.stop = pos.entryPrice;
+              pos.fills.push({ type: "tp1", price, sz: +tp1Sz, time: new Date().toISOString() });
+              notifications.push({ type: "tp1_hit", pos, price });
+              this.saveTrades(trades);
+            } catch (e) {
+              console.log(`[TRADE] TP1 sell error: ${e.message}`);
             }
-
-            pos.stop = pos.entryPrice;
-            notifications.push({ type: "tp1_hit", pos, price });
-            this.saveTrades(trades);
           }
         }
 
-        // Check TP2
-        if (pos.tp1Hit && !pos.tp2Hit && pos.tp2AlgoId) {
-          const tp2Status = await checkAlgo(pos.tp2AlgoId);
-          if (tp2Status && (tp2Status.state === "effective" || tp2Status.state === "filled")) {
-            pos.tp2Hit = true;
-            const tp2Sz = +this.formatSz(pos.entrySz * 0.3, inst);
-            const price = pos.tp2;
-            const pnl = pos.side === "long"
-              ? (price - pos.entryPrice) * tp2Sz * ctVal
-              : (pos.entryPrice - price) * tp2Sz * ctVal;
-            pos.realizedPnl += pnl;
-            pos.remainingSz -= tp2Sz;
-            pos.fills.push({ type: "tp2", price, sz: tp2Sz, time: new Date().toISOString() });
+        // Check TP2 (sell 30%)
+        if (pos.tp1Hit && !pos.tp2Hit && pos.tp2 && price >= pos.tp2) {
+          const inst = await this.getInstrument(pos.instId);
+          const lotSz = inst ? +inst.lotSz : 0.0001;
+          const tp2Qty = Math.floor((pos.entrySz * 0.3) / lotSz) * lotSz;
+          const precision = lotSz < 1 ? Math.round(-Math.log10(lotSz)) : 0;
+          const tp2Sz = tp2Qty.toFixed(precision);
 
-            await this.cancelAllOrders(pos.instId);
-            if (pos.remainingSz > 0) {
-              const remSz = this.formatSz(pos.remainingSz, inst);
-              try {
-                const newStop = await this.api("POST", "/api/v5/trade/order-algo", {
-                  instId: pos.instId, tdMode: "cross", side: closeSide,
-                  ordType: "conditional", sz: remSz,
-                  slTriggerPx: this.formatPx(pos.entryPrice, inst),
-                  slOrdPx: "-1", slTriggerPxType: "mark",
-                });
-                pos.stopAlgoId = newStop[0]?.algoId;
-              } catch {}
-
-              if (pos.tp3) {
-                try {
-                  const tp3Result = await this.api("POST", "/api/v5/trade/order-algo", {
-                    instId: pos.instId, tdMode: "cross", side: closeSide,
-                    ordType: "conditional", sz: remSz,
-                    tpTriggerPx: this.formatPx(pos.tp3, inst),
-                    tpOrdPx: "-1", tpTriggerPxType: "mark",
-                  });
-                  pos.tp3AlgoId = tp3Result[0]?.algoId;
-                } catch {}
-              }
+          if (+tp2Sz > 0) {
+            try {
+              await this.api("POST", "/api/v5/trade/order", {
+                instId: pos.instId, tdMode: "cash", side: "sell", ordType: "market",
+                sz: tp2Sz, tgtCcy: "base_ccy",
+              });
+              const pnl = (price - pos.entryPrice) * +tp2Sz;
+              pos.tp2Hit = true;
+              pos.remainingSz -= +tp2Sz;
+              pos.realizedPnl += pnl;
+              pos.fills.push({ type: "tp2", price, sz: +tp2Sz, time: new Date().toISOString() });
+              notifications.push({ type: "tp2_hit", pos, price });
+              this.saveTrades(trades);
+            } catch (e) {
+              console.log(`[TRADE] TP2 sell error: ${e.message}`);
             }
-
-            notifications.push({ type: "tp2_hit", pos, price });
-            this.saveTrades(trades);
           }
         }
 
-        // Check TP3
-        if (pos.tp2Hit && !pos.tp3Hit && pos.tp3AlgoId) {
-          const tp3Status = await checkAlgo(pos.tp3AlgoId);
-          if (tp3Status && (tp3Status.state === "effective" || tp3Status.state === "filled")) {
-            pos.tp3Hit = true;
-            const price = pos.tp3;
-            const pnl = pos.side === "long"
-              ? (price - pos.entryPrice) * pos.remainingSz * ctVal
-              : (pos.entryPrice - price) * pos.remainingSz * ctVal;
-            pos.realizedPnl += pnl;
-            pos.fills.push({ type: "tp3", price, sz: pos.remainingSz, time: new Date().toISOString() });
-            pos.remainingSz = 0;
+        // Check TP3 (sell remaining)
+        if (pos.tp2Hit && !pos.tp3Hit && pos.tp3 && price >= pos.tp3) {
+          const closed = await this.closePosition(pos.base, "tp3");
+          if (closed) {
+            notifications.push({ type: "tp3_hit", pos: closed, price });
+          }
+        }
 
-            await this.cancelAllOrders(pos.instId);
-            pos.status = "closed";
-            pos.closedAt = new Date().toISOString();
-            notifications.push({ type: "tp3_hit", pos, price });
-            this.saveTrades(trades);
+        // Check breakeven stop (after TP1)
+        if (pos.tp1Hit && price <= pos.entryPrice) {
+          const closed = await this.closePosition(pos.base, "breakeven");
+          if (closed) {
+            notifications.push({ type: "stop_hit", pos: closed, pnl: closed.realizedPnl });
           }
         }
 
@@ -480,20 +301,24 @@ class OKXTrader {
     const pos = trades.positions.find(p => p.base === base && p.status === "open");
     if (!pos) return null;
 
-    await this.cancelAllOrders(pos.instId);
-    const inst = await this.getInstrument(pos.instId);
-    const closeSide = pos.side === "long" ? "sell" : "buy";
     const price = await this.getPrice(pos.instId);
 
     if (pos.remainingSz > 0) {
-      await this.api("POST", "/api/v5/trade/order", {
-        instId: pos.instId, tdMode: "cross", side: closeSide,
-        ordType: "market", sz: this.formatSz(pos.remainingSz, inst),
-      });
-      const ctVal = inst ? +inst.ctVal : 1;
-      const pnl = pos.side === "long"
-        ? (price - pos.entryPrice) * pos.remainingSz * ctVal
-        : (pos.entryPrice - price) * pos.remainingSz * ctVal;
+      const inst = await this.getInstrument(pos.instId);
+      const lotSz = inst ? +inst.lotSz : 0.0001;
+      const precision = lotSz < 1 ? Math.round(-Math.log10(lotSz)) : 0;
+      const sz = pos.remainingSz.toFixed(precision);
+
+      try {
+        await this.api("POST", "/api/v5/trade/order", {
+          instId: pos.instId, tdMode: "cash", side: "sell", ordType: "market",
+          sz, tgtCcy: "base_ccy",
+        });
+      } catch (e) {
+        console.log(`[TRADE] Close sell error: ${e.message}`);
+      }
+
+      const pnl = (price - pos.entryPrice) * pos.remainingSz;
       pos.realizedPnl += pnl;
       pos.fills.push({ type: reason, price, sz: pos.remainingSz, time: new Date().toISOString() });
     }

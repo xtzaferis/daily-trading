@@ -52,7 +52,6 @@ jobs:
           OKX_API_SECRET: ${{ secrets.OKX_API_SECRET }}
           OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
           OKX_LIVE: ${{ secrets.OKX_LIVE }}
-          LEVERAGE: ${{ secrets.LEVERAGE }}
           RISK_PCT: ${{ secrets.RISK_PCT }}
           MAX_POSITIONS: ${{ secrets.MAX_POSITIONS }}
         run: node bot/telegram-bot.js

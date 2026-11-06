@@ -14,13 +14,12 @@ if (!BOT_TOKEN || !CHAT_ID) {
 const OKXTrader = require("./trader");
 const trader = new OKXTrader({
   demo: process.env.OKX_LIVE !== "true",
-  leverage: +(process.env.LEVERAGE || 5),
   riskPct: +(process.env.RISK_PCT || 0.01),
   maxPositions: +(process.env.MAX_POSITIONS || 5),
 });
 
 if (trader.enabled) {
-  console.log(`Trading ENABLED (${trader.demo ? "DEMO" : "LIVE"}) | ${trader.leverage}x leverage | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
+  console.log(`Trading ENABLED (${trader.demo ? "DEMO" : "LIVE"}) | Spot USDC | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
 } else {
   console.log("Trading DISABLED (no OKX_API_KEY/SECRET/PASSPHRASE)");
 }
