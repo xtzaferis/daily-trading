@@ -41,6 +41,7 @@ jobs:
           BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
           BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
           BINANCE_LIVE: ${{ secrets.BINANCE_LIVE }}
+          LEVERAGE: ${{ secrets.LEVERAGE }}
           RISK_PCT: ${{ secrets.RISK_PCT }}
           MAX_POSITIONS: ${{ secrets.MAX_POSITIONS }}
         run: node bot/telegram-bot.js

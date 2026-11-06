@@ -14,12 +14,13 @@ if (!BOT_TOKEN || !CHAT_ID) {
 const BinanceTrader = require("./trader");
 const trader = new BinanceTrader({
   testnet: process.env.BINANCE_LIVE !== "true",
+  leverage: +(process.env.LEVERAGE || 5),
   riskPct: +(process.env.RISK_PCT || 0.01),
   maxPositions: +(process.env.MAX_POSITIONS || 5),
 });
 
 if (trader.enabled) {
-  console.log(`Trading ENABLED (${trader.testnet ? "TESTNET" : "LIVE"}) | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
+  console.log(`Trading ENABLED (${trader.testnet ? "TESTNET" : "LIVE"}) | ${trader.leverage}x leverage | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
 } else {
   console.log("Trading DISABLED (no BINANCE_API_KEY/SECRET)");
 }
@@ -965,7 +966,7 @@ async function runDaily() {
   // Log signals and execute trades for clean BUY signals
   for (const d of actionable) {
     logSignal(d, "1d");
-    if (trader.enabled && d.action === "BUY" && (!d.cautions || d.cautions.length === 0)) {
+    if (trader.enabled && (!d.cautions || d.cautions.length === 0)) {
       const result = await trader.executeSignal({
         base: d.base, action: d.action, tf: "1d",
         entry: d.plan.entry, stop: d.plan.stop,
@@ -1039,7 +1040,7 @@ async function runHourly() {
   for (const sig of clean) {
     await sendTelegram(formatSignal(sig, sig.tf));
     logSignal(sig, sig.tf);
-    if (trader.enabled && sig.action === "BUY") {
+    if (trader.enabled) {
       const result = await trader.executeSignal({
         base: sig.base, action: sig.action, tf: sig.tf,
         entry: sig.plan.entry, stop: sig.plan.stop,
