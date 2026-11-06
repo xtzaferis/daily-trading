@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Mode: auto (default), daily, or hourly'
+        description: 'Mode: auto, daily, hourly, test-trade, test-long, test-short, test-both'
         default: 'auto'
 
 permissions:
@@ -33,18 +33,18 @@ jobs:
           key: bot-state-${{ github.run_id }}
           restore-keys: bot-state-
 
-      - name: Test OKX connection
-        if: ${{ github.event.inputs.mode == 'test-trade' }}
+      - name: Test OKX trading
+        if: ${{ startsWith(github.event.inputs.mode, 'test-') }}
         env:
           OKX_API_KEY: ${{ secrets.OKX_API_KEY }}
           OKX_API_SECRET: ${{ secrets.OKX_API_SECRET }}
           OKX_PASSPHRASE: ${{ secrets.OKX_PASSPHRASE }}
           OKX_LIVE: "true"
-        run: node bot/test-trade.js
+        run: node bot/test-trade.js ${{ github.event.inputs.mode == 'test-trade' && 'check' || github.event.inputs.mode == 'test-long' && 'long' || github.event.inputs.mode == 'test-short' && 'short' || 'both' }}
         timeout-minutes: 2
 
       - name: Run signal scanner
-        if: ${{ github.event.inputs.mode != 'test-trade' }}
+        if: ${{ !startsWith(github.event.inputs.mode, 'test-') }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
