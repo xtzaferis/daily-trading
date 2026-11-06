@@ -16,6 +16,7 @@ class OKXTrader {
     this.demo = opts.demo !== false;
     this.riskPct = opts.riskPct || 0.01;
     this.maxPositions = opts.maxPositions || 5;
+    this.maxDailyLoss = opts.maxDailyLoss || +(process.env.MAX_DAILY_LOSS || 5);
     this.enabled = !!(this.apiKey && this.apiSecret && this.passphrase);
   }
 
@@ -93,6 +94,14 @@ class OKXTrader {
 
     if (openPositions.length >= this.maxPositions) {
       return { executed: false, reason: `Max positions reached (${this.maxPositions})` };
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const dailyLoss = trades.positions
+      .filter(p => p.status === "closed" && p.closedAt?.startsWith(today) && p.realizedPnl < 0)
+      .reduce((s, p) => s + Math.abs(p.realizedPnl), 0);
+    if (dailyLoss >= this.maxDailyLoss) {
+      return { executed: false, reason: `Daily loss limit reached ($${dailyLoss.toFixed(2)} / $${this.maxDailyLoss})` };
     }
 
     const existing = openPositions.find(p => p.base === signal.base);

@@ -19,7 +19,7 @@ const trader = new OKXTrader({
 });
 
 if (trader.enabled) {
-  console.log(`Trading ENABLED (${trader.demo ? "DEMO" : "LIVE"}) | Spot USDC | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions}`);
+  console.log(`Trading ENABLED (${trader.demo ? "DEMO" : "LIVE"}) | Spot USDC | Risk: ${trader.riskPct * 100}% | Max positions: ${trader.maxPositions} | Daily loss limit: $${trader.maxDailyLoss}`);
 } else {
   console.log("Trading DISABLED (no OKX_API_KEY/SECRET/PASSPHRASE)");
 }
